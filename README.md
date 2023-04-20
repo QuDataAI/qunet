@@ -1,2 +1,3 @@
-# qunet
+# QuNet
+
 Working with deep learning models
