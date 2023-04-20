@@ -8,6 +8,7 @@ QuNet.egg-info/top_level.txt
 qunet/__init__.py
 qunet/data.py
 qunet/models.py
+qunet/nnet_v1.py
 qunet/optim.py
 qunet/plotter.py
 qunet/trainer.py

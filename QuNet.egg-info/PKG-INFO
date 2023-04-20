@@ -2,11 +2,12 @@ Metadata-Version: 2.1
 Name: QuNet
 Version: 0.0.1
 Summary: Working with deep learning models
-Home-page: https://github.com/synset-ai/qunet
+Home-page: https://github.com/step137/qunet
 Author: synset
 Author-email: steps137ai@gmail.com
 License: UNKNOWN
-Description: # qunet
+Description: # QuNet
+        
         Working with deep learning models
         
 Platform: UNKNOWN
