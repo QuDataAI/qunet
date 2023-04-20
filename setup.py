@@ -11,7 +11,7 @@ setuptools.setup(
     description="Working with deep learning models",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/synset-ai/qunet",
+    url="https://github.com/step137/qunet",
     packages=setuptools.find_packages(),
     classifiers=[
         "Programming Language :: Python :: 3",
