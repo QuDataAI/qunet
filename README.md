@@ -8,11 +8,14 @@ Working with deep learning models.
 * Large set of custom modules for neural networks (MLP, CNN, Transformer, etc.)
 * Trainer class for training the model.
 
+<hr>
+
 ## Install
 
 ```
 pip install qunet
 ```
+<hr>
 
 ## Usage
 
@@ -20,6 +23,8 @@ pip install qunet
 from qunet import MLP, Data, Trainer, CosScheduler
 ```
 To work with DL, **data** and **model** are required. 
+
+<hr>
 
 ## Model
 
@@ -44,6 +49,7 @@ class Model(nn.Module):
         errors = torch.abs(y_pred.detach()-y_true)   # (B,1)  one metric
         return loss, errors                          # ()  (B,1)
 ```
+<hr>
 
 ## Data
 
@@ -67,6 +73,17 @@ So dataset is a list or tuple of two elements (input and target).
 Each element can be a tensor or a list (tuple) of tensors.
 All tensors in the dataset are assumed to have the same length (by first index).
 
+The Data class constructor has the following parameters:
+```python
+Data(dataset, shuffle=True, batch_size=64,  whole_batch=False, n_packs=1)
+```
+* `dataset` - model input and output tuple (X, Y), as described above
+* `shuffle` - shuffle data after after passing through all examples
+* `batch_size` - minibatch size can be changed later: data_trn.batch_size = 1024
+* `whole_batch` - return minibatches of batch_size only; if the total number of examples is not divisible by batch_size, you may end up with one small batch with an unreliable gradient. If whole_batch = True, such a batch will not be issued.
+* `n_packs` - data is split into n_packs packs; the passage of one pack is considered an training ephoch. It is used with a large dataset, when it is necessary to do validation more often (after every epoch).
+</ul>
+
 You can also use the standard DataLoader with Trainer:
 ```python
     from torchvision            import datasets
@@ -76,6 +93,7 @@ You can also use the standard DataLoader with Trainer:
     mnist = datasets.MNIST(root='data', train=True,  transform=ToTensor(), download=True)
     data_trn  = DataLoader(dataset=mnist, batch_size=1024, shuffle=True)
 ```
+<hr>
 
 ## Trainer
 
@@ -85,19 +103,56 @@ After that, the `run` function is called:
 ```
 trainer = Trainer(model, data_trn, data_val)
 trainer.set_optimizer( torch.optim.SGD(model.parameters(), lr=1e-2) )
-trainer.run(epochs=100, pre_val=True, period_plot = 10)
+trainer.run(epochs=100, pre_val=True, period_plot=10)
 ```
 You can add different training schedulers, customize the output of training graphs, manage the storage of the best models and checkpoints, and much more.
+
+```python
+Trainer(model, data_trn, data_val, device=None, dtype=torch.float32, score_max=False)
+```
+
+* `model`     - model trained by Trainer
+* `data_trn`  - training data (Data or DataLoader instance)
+* `data_val`  - data for validation (instance of Data or DataLoader); may be missing
+* `device`    - device to compute ('cuda', 'cpu'); default is determined automatically
+* `dtype`     - data type and model parameter (torch.float32 or float16), see training large models
+* `score_max` - consider that the metric (the first column of the second tensor returned by the metrics model function) should strive to become the maximum (for example, so for accuracy)
+
+```python
+run(epochs=None, samples=None,
+    pre_val=False,  period_val=1, period_plot=100, period_checks=1,          
+    period_val_beg = 4, samples_beg = None)
+```
+
+* `epochs`         - number of epochs for training (passes of one data_trn pack). If not defined (None) works "infinitely".
+* `samples`        - if defined, then will stop after this number of samples, even if epochs has not ended
+* `pre_val`        - validate before starting training
+* `period_val`     - period after which validation run (in epochs)
+* `period_plot`    - period after which the training plot is displayed (in epochs)
+* `period_checks`  - period after which checkpoints are made and the current model is saved (in epochs)
+* `period_val_beg` - validation period on the first samples_beg samples. Used when validation needs to be done less frequently at the start of training.
+* `samples_beg`   -  the number of samples from the start, after which the validation period will be equal to period_val
+
+
+<hr>
 
 ## Visualization of the training process
 
 <img src="img/loss.png">
 
+<hr>
+
 ## Using Schedules
+
+<hr>
 
 ## Working with large models
 
+<hr>
+
 ## Model state visualization
+
+<hr>
 
 ## Examples
 
@@ -105,6 +160,8 @@ You can add different training schedulers, customize the output of training grap
 * Interpolation_F(x)
 * MNIST
 * Vanishing gradient
+
+<hr>
 
 ## Versions
 

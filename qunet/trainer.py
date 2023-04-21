@@ -261,25 +261,19 @@ class Trainer:
 
     #---------------------------------------------------------------------------
 
-    def run(self,
-            epochs = 100,             # число эпох для обучения (проходов одного пака data_trn)
-            pre_val=False,            # перед началом обучения сделать валидацию
-            period_plot=100,          # через сколько эпох выводить график обучения
-            period_checks=1,          # через сколько эпох делать чекпоинты (сохранять модель)
-            period_val=1,             # через сколько эпох делать валидацию
-            period_val_beg = 4,       # период валидации на первых samples_beg примерах
-            samples_beg = None,       # потом включается period_val
-            stop_after_samples=None): # остановится после этого числа примеров
+    def run(self,  epochs =None,  samples=None,            
+            pre_val=False, period_val=1, period_plot=100,         
+            period_checks=1, period_val_beg = 4, samples_beg = None ): 
         """
         Args:
-            * epochs               - число эпох для обучения (полных проходов data_trn)
-            * pre_val              - перед началом обучения сделать валидацию
-            * period_val           - через сколько эпох делать валидацию
-            * period_plot          - через сколько эпох выводить график обучения
-            * period_checks        - через сколько эпох делать чекпоинты (сохранять модель)
-            * period_val_beg = 4,  - период валидации на первых samples_beg примерах
-            * samples_beg = None,  - потом включается period_val
-            * stop_after_samples   - остановится после этого числа примеров
+            * epochs               - number of epochs for training (passes of one data_trn pack). If not defined (None) works "infinitely".
+            * samples              - if defined, then will stop after this number of samples, even if epochs has not ended
+            * pre_val              - validate before starting training
+            * period_val           - period after which validation run (in epochs)
+            * period_plot          - period after which the training plot is displayed (in epochs)
+            * period_checks        - period after which checkpoints are made and the current model is saved (in epochs)
+            * period_val_beg = 4   - validation period on the first samples_beg examples
+            * samples_beg = None   - the number of samples from the start, after which the validation period will be equal to period_val.
         """
         assert self.optim is not None, "Define the optimizer first"
         self.scheduler.optim = self.optim
@@ -290,6 +284,7 @@ class Trainer:
             self.add_hist(self.hist_val, self.data_val.batch_size, samples_val, steps_val, tm_val, loss_val, score_val, self.scheduler.get_lr())
             print()
 
+        epochs = epochs or 1_000_000
         #for epoch in tqdm(range(1, epochs+1)):
         for epoch in range(1, epochs+1):
             losses, scores, counts, (samples_trn,steps_trn,tm_trn) = self.fit(epoch, self.model, self.data_trn, train=True)
@@ -342,14 +337,15 @@ class Trainer:
             if self.cfg.get('folder_checks', False) and (epoch % period_checks == 0 or epoch == epochs):
                 self.save(self.model, folder="", prefix="check_"+self.now())
 
-            if stop_after_samples is not None:
-                stop_after_samples -= samples_trn
-                if stop_after_samples <= 0:
+            self.scheduler.step(samples_trn)
+
+            if samples is not None:
+                samples -= samples_trn
+                if samples <= 0:
                     self.plot()
                     break
 
-            self.scheduler.step(samples_trn)
-
+            
     def plot(self):
         self.plotter.plot(self.cfg, self.model, data=dict(
                             hist_val=self.hist_val, hist_trn=self.hist_trn, labels=self.labels,
