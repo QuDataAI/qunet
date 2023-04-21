@@ -8,6 +8,7 @@ Working with deep learning models.
 * Large set of custom modules for neural networks (MLP, CNN, Transformer, etc.)
 * Trainer class for training the model.
 * Various tools for visualizing the training process and the state of the model.
+* Training large models: float16, mini-batch splitting if it does not fit in memory, etc.
 
 <hr>
 
@@ -21,15 +22,20 @@ pip install qunet
 ## Usage
 
 ```python
-from qunet import MLP, Data, Trainer, CosScheduler
+from qunet import Data, Trainer, ExpScheduler
 
-X = torch.rand(10000,1)
+# 1. create dataset
+X = torch.rand(10000,1)               
 Y = 2*X + 1
 data_trn = Data((X,Y), batch_size=128, shuffle=True)
 
-tariner = Trainer(model, data_trn)
+# 2. create trainer, optimizer and scheduler (if need)                                               
+tariner = Trainer(model, data_trn)    
 trainer.set_optimizer( torch.optim.SGD(model.parameters(), lr=1e-2) )
-trainer.run(epochs=100, pre_val=True, period_plot = 1e8)
+trainer.set_scheduler( ExpScheduler(lr1=1e-5, lr2=1e-4, samples=100e3) )
+
+# 3. run training
+trainer.run(epochs=100, period_plot=5)
 ```
 
 <hr>
@@ -144,7 +150,6 @@ trainer.run(epochs=None, samples=None,
 * `period_val_beg` - validation period on the first `samples_beg` samples. Used when validation needs to be done less frequently at the start of training.
 * `samples_beg`   -  the number of samples from the start, after which the validation period will be equal to `period_val`
 
-
 <hr>
 
 ## Visualization of the training process
@@ -156,6 +161,11 @@ trainer.run(epochs=None, samples=None,
 ## Using Schedules
 
 <hr>
+
+## Checkpoints and best model
+
+<hr>
+
 
 ## Working with large models
 
@@ -177,3 +187,8 @@ trainer.run(epochs=None, samples=None,
 ## Versions
 
 * 0.0.4 - fixed version for competition IceCube (kaggle)
+
+
+$$
+E=mc^2
+$$
