@@ -30,9 +30,9 @@ class Trainer:
     Универсальный класс обучения модели.
     Любой метод можно, естественно, переопределить наследованием или у экземпляра.
     """
-    def __init__(self, model, data_trn, data_val, score_max=False) -> None:
+    def __init__(self, model, data_trn, data_val, device=None, score_max=False) -> None:
         self.model = model
-        
+        self.device = device or torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.optim = None
         self.scheduler = ExpScheduler()
         self.data_trn = data_trn
@@ -102,6 +102,14 @@ class Trainer:
         self.scheduler.optim = self.optim
 
     #---------------------------------------------------------------------------
+    def to_device(self, X):
+        if type(X) is list or type(X) is tuple:
+            for i in range(len(X)):
+                X[i] = X[i].to(self.device)
+        else:
+            X = X.to(self.device)
+        return X
+    #---------------------------------------------------------------------------
 
     def fit(self, epoch, model, data,  train=True, accumulate=1, verbose=1):
         """
@@ -118,9 +126,13 @@ class Trainer:
 
         samples, steps, beg, lst = 0, 0, time.time(), time.time()
         counts_all, losses_all,  scores_all = torch.empty((0,1)), None,  None
-        for b, batch in enumerate(data):
-            loss, _, scores = model(batch)
-                        
+        for b, (x, y_true) in enumerate(data):
+            num = len(x[0]) if type(x) is list or type(x) is tuple else len(x)
+            x, y_true = self.to_device(x), self.to_device(y_true)            
+
+            y_pred = model(x)
+            loss, scores = model.metrics(x, y_pred, y_true)            
+            
             if train:
                 loss.backward()               # вычисляем градиенты
                 if (b+1) % accumulate == 0:
@@ -128,14 +140,14 @@ class Trainer:
                     self.optim.zero_grad()    # обнуляем градиенты
                     steps      += 1           # число сделанных шагов
                     self.steps += 1           # число сделанных шагов за всё время
-                self.samples += len(batch[0]) # число просмотренных примеров за всё время
+                self.samples += num           # число просмотренных примеров за всё время
 
-            samples += len(batch[0])          # число просмотренных примеров за эпоху
+            samples += num                    # число просмотренных примеров за эпоху
             losses_all = loss.detach() if losses_all is None else torch.vstack([losses_all, loss.detach()])
             if scores is not None:
                 scores = scores.detach().mean(dim=0)
                 scores_all = scores if scores_all is None else torch.vstack([scores_all, scores])
-            counts_all = torch.vstack([counts_all, torch.Tensor([len(batch[0])])])
+            counts_all = torch.vstack([counts_all, torch.Tensor([num])])
 
             if verbose and (time.time()-lst > 1 or b+1 == len(data) ):
                 lst = time.time()

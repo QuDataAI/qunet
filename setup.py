@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="QuNet",
-    version="0.0.2",
+    version="0.0.4",
     author="synset",
     author_email="steps137ai@gmail.com",
     description="Working with deep learning models",
