@@ -21,35 +21,40 @@ class Plotter:
         samples, steps             = data.get('samples'), data.get('steps')
         parms1 = sum(p.numel() for p in model.parameters() if     p.requires_grad)    
         #parms2 = sum(p.numel() for p in self.model.parameters() if not p.requires_grad)    
-        val, trn, unit =  hist_val, hist_trn, 10**cfg['samples_unit_power']
+        val, trn =  hist_val, hist_trn
+
+        t_unit = cfg['time_units'] if 'time_units' in cfg and cfg['time_units'] in ['ms','s','m','h']  else 's'
+        t_unit_scale = dict(ms=1e-3, s=1, m=60, h=3600)[t_unit]
+        c_unit = cfg['count_units'] if cfg.get('count_units',0) > 0  else 1
+        c_unit_power = round(np.log10(c_unit), 0)
         
         plt.figure(figsize=(w,h), facecolor ='w')
         
         lr     = f"{trn['lr'][-1]:.1e}" if len(trn['lr']) else '?'
         bs_trn = f"{trn['batch_size'][-1]}" if len(trn['batch_size']) else '?'
         bs_val = f"{val['batch_size'][-1]}" if len(val['batch_size']) else '?'
-        tm_trn = f"{unit * trn['time'][-1]/trn['samples_epoch'][-1]:.2f}" if len(trn['time']) and trn['samples_epoch'][-1] > 0 else '?'
-        tm_val = f"{unit * val['time'][-1]/val['samples_epoch'][-1]:.2f}" if len(val['time']) and val['samples_epoch'][-1] > 0 else '?'
+        tm_trn = f"{c_unit * trn['time'][-1]/(t_unit_scale*trn['samples_epoch'][-1]):.2f}" if len(trn['time']) and trn['samples_epoch'][-1] > 0 else '?'
+        tm_val = f"{c_unit * val['time'][-1]/(t_unit_scale*val['samples_epoch'][-1]):.2f}" if len(val['time']) and val['samples_epoch'][-1] > 0 else '?'
 
-        plt.suptitle(fr"samples={samples}, steps:{steps}; lr={lr}; batch=(trn:{bs_trn}, val:{bs_val}); time=(trn:{tm_trn}, val:{tm_val})s/$10^{cfg['samples_unit_power']}$; params={parms1/1e3:.0f}k", fontsize = 10)
+        plt.suptitle(fr"samples={samples}, steps:{steps}; lr={lr}; batch=(trn:{bs_trn}, val:{bs_val}); time=(trn:{tm_trn}, val:{tm_val}){t_unit}/$10^{c_unit_power:.0f}$; params={parms1/1e3:.0f}k", fontsize = 10)
 
         if  not cfg['plot_loss'].get('show', True):
-            self.subplot(111, hist_val, hist_trn, cfg=cfg['plot_score'], unit=unit, x_min=cfg['x_min'], x_max=cfg['x_max'], power=cfg['samples_unit_power'], kind='score')
+            self.subplot(111, hist_val, hist_trn, cfg=cfg['plot_score'], x_min=cfg['x_min'], x_max=cfg['x_max'], c_unit=c_unit, c_unit_power=c_unit_power, kind='score')
         elif not cfg['plot_score'].get('show', True):
-             self.subplot(111, hist_val, hist_trn, cfg=cfg['plot_loss'], unit=unit, x_min=cfg['x_min'], x_max=cfg['x_max'], power=cfg['samples_unit_power'], kind='loss')
+            self.subplot(111, hist_val, hist_trn, cfg=cfg['plot_loss'],  x_min=cfg['x_min'], x_max=cfg['x_max'], c_unit=c_unit, c_unit_power=c_unit_power, kind='loss')
         else:
-            self.subplot(121, hist_val, hist_trn, cfg=cfg['plot_score'], unit=unit, x_min=cfg['x_min'], x_max=cfg['x_max'], power=cfg['samples_unit_power'], kind='score')
-            self.subplot(122, hist_val, hist_trn, cfg=cfg['plot_loss'],  unit=unit, x_min=cfg['x_min'], x_max=cfg['x_max'], power=cfg['samples_unit_power'], kind='loss')            
+            self.subplot(121, hist_val, hist_trn, cfg=cfg['plot_score'], x_min=cfg['x_min'], x_max=cfg['x_max'], c_unit=c_unit, c_unit_power=c_unit_power, kind='score')
+            self.subplot(122, hist_val, hist_trn, cfg=cfg['plot_loss'],  x_min=cfg['x_min'], x_max=cfg['x_max'], c_unit=c_unit, c_unit_power=c_unit_power, kind='loss')            
         plt.show()
 
     #---------------------------------------------------------------------------    
 
-    def subplot(self, sub, val, trn, cfg, unit, x_min, x_max, power, kind):                
+    def subplot(self, sub, val, trn, cfg, x_min, x_max, c_unit, c_unit_power, kind):                
         ax1 = plt.subplot(sub); ax1.grid(ls=':')                                            
         if len(val['samples']) > 0 and len(trn['samples']) > 0:        
             x_max = max(val['samples'][-1], trn['samples'][-1]) if x_max is None else x_max
             #ax1.set_xlim(0.99*x_min/unit, x_max*1.1/unit)
-            ax1.set_xlim(x_min/unit, x_max/unit)
+            ax1.set_xlim(x_min/c_unit, x_max/c_unit)
 
         if kind == 'loss':
             best_loss  = f"{val['best_loss'] [-1][-1]:.4f}" if len(val['best_loss'])  else "?"
@@ -62,17 +67,17 @@ class Plotter:
             score_trn  = f"{trn['score'][-1]:.4f}"      if len(trn['score']) else "?"
             plt.title(f"score = (bst: {best_score}, val: {score_val},  trn: {score_trn})")
 
-        ax1.set_xlabel(fr"$10^{power}$ samples"); ax1.set_ylabel(kind);                     
+        ax1.set_xlabel(fr"$10^{c_unit_power:.0f}$ samples"); ax1.set_ylabel(kind);                     
         if cfg.get('y_min') is not None  and cfg.get('y_max') is not None:            
             ax1.set_ylim(cfg['y_min'], cfg['y_max'])
             if cfg['ticks'] is not None:
                 ax1.set_yticks(np.linspace(cfg['y_min'], cfg['y_max'], cfg['ticks']))  
 
         if len(trn['samples']):                      # trn
-            ax1.plot(np.array(trn['samples'])/unit, trn[kind], 'darkblue', linewidth=0.5)
+            ax1.plot(np.array(trn['samples'])/c_unit, trn[kind], 'darkblue', linewidth=0.5)
 
         if len(val['samples']):                      # val
-            ax1.plot(np.array(val['samples'])/unit, val[kind], 'g', linewidth=1.5)
+            ax1.plot(np.array(val['samples'])/c_unit, val[kind], 'g', linewidth=1.5)
 
         ax1.legend([kind+'_trn',  kind+'_val'], loc='upper left', frameon = False)
         ax1.tick_params(axis='y', colors='darkgreen')
@@ -80,12 +85,12 @@ class Plotter:
         if len(trn['best_'+kind]):        
             for c in trn['best_'+kind]:
                 if True:
-                    ax1.scatter(c[0]/unit, c[2], s=3, c='darkblue', edgecolors='black', linewidths=0.5)                                
+                    ax1.scatter(c[0]/c_unit, c[2], s=3, c='darkblue', edgecolors='black', linewidths=0.5)                                
 
         if len(val['best_'+kind]):        
             for c in val['best_'+kind]:
                 if True:
-                    ax1.scatter(c[0]/unit, c[2], s=7, c='g', edgecolors='black', linewidths=0.5)                                
+                    ax1.scatter(c[0]/c_unit, c[2], s=7, c='g', edgecolors='black', linewidths=0.5)                                
 
         ax2 = ax1.twinx();                                     # lr
         ax2.set_yscale('log')        
@@ -97,7 +102,7 @@ class Plotter:
                     lr1 -= 1; lr2 +=1
                 lr1, lr2 = 10**lr1, 10**lr2
                 ax2.set_ylim(lr1, lr2)
-            ax2.plot(np.array(trn['samples'])/unit, trn['lr'], ":", color='darkred')                 
+            ax2.plot(np.array(trn['samples'])/c_unit, trn['lr'], ":", color='darkred')                 
         ax2.legend(['lr'], loc='upper right', frameon = False)
         ax2.tick_params(axis='y', colors='darkred')
         if sub == 121:
