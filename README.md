@@ -4,7 +4,7 @@
 [![PyPI version](https://badge.fury.io/py/torchinfo.svg)](https://badge.fury.io/py/torchinfo)
 
 
-Working with deep learning models.
+Easy working with deep learning models.
 * Large set of custom modules for neural networks (MLP, CNN, Transformer, etc.)
 * Trainer class for training the model.
 * Various tools for visualizing the training process and the state of the model.
@@ -42,13 +42,13 @@ trainer.run(epochs=100, period_plot=5)
 
 ## Model
 
-For `Trainer` to work with a model, it must be a class (successor of nn.Module) with methods:
-* The `forward` function takes input x and returns output y.
+Model must be a class (successor of nn.Module) with methods:
+* The `forward` function takes input `x` and returns output `y`.
 These can be tensors or tuples (lists) of tensors.
-* The `metrics` function takes  (x, y_true, y_pred) and returns the model's scalar loss and tensor quality metric: 
- (B,1) for one metric (accuracy, for example) or (B,n) for n quality metrics.
+* The `metrics` function takes  `(x, y_true, y_pred)` and returns the model's scalar loss and tensor quality metric: 
+ `(B,1)` for one metric (accuracy, for example) or `(B,n)` for n quality metrics.
 
-For example, for 1D linear regression  y=f(x) with mse-loss and metric as |y_pred-y_true|, model looks like:
+For example, for 1D linear regression  $y=f(x)$ with mse-loss and metric as |y_pred-y_true|, model looks like:
 ```python
 class Model(nn.Module):
     def __init__(self):        
@@ -159,6 +159,33 @@ trainer.run(epochs=None, samples=None,
 <hr>
 
 ## Using Schedules
+
+Schedulers allow you to control the learning process by changing the learning rate according to the required algorithm.
+There can be one or more schedulers. In the latter case, they are processed sequentially one after another.
+Существуют следующие шедулеры:
+* `LineScheduler(lr1, lr2, samples)` - changes the learning rate from `lr1` to `lr2` over `samples` training samples. If `lr1` is not specified, the optimizer's current lr is used for it.
+* `ExpScheduler(lr1, lr2, samples)` - similar, but changing `lr` from `lr1` to `lr2` is exponential.
+* `CosScheduler(lr1, lr_hot,  lr2, samples, warmup)` - changing `lr` by cosine with preliminary linear heating during `warmup` samples from `lr1` to `lr_hot`.
+* `WaitScheduler(lr1, samples)` - wait for `samples` samples with unchanged `lr` (as usual, the last value is taken if `lr1` is not set). This scheduler is useful when using lists of schedulers.
+
+Each scheduler has a `plot` method that can be used to display the training plot:
+```python
+sch = CosScheduler(lr1=1e-5, lr_hot=1e-2, lr2=1e-4,  samples=100e3, warmup=1e3)
+sch.plot(log=True)
+```
+You can also call the `trainer.plot_schedulers()` method of the `Trainer` class.
+It will draw the schedule of the list of schedulers added to the trainer.
+
+Compiling a list of schedulers is done by the following methods of the `Trainer` class:
+* `set_scheduler`( sch ) - set a list of schedulers from one scheduler sch (after clearing the list);
+* `add_scheduler`( sch ) - add scheduler sch
+* `del_scheduler`(i)     - remove the i-th scheduler from the list (numbering from zero)
+
+This group of methods works with all schedulers:
+* `reset_schedulers`() - reset all scheduler counters and make them active (starting from the first one)
+* `stop_schedulers` () - stop all schedulers
+* `clear_schedulers`() - clear list of schedulers
+Example:
 
 <hr>
 
