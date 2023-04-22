@@ -3,7 +3,7 @@ from   tqdm.auto import tqdm
 import numpy as np, matplotlib.pyplot as plt
 import torch, torch.nn as nn
 
-from .optim   import Scheduler, LineScheduler, ExpScheduler, CosScheduler
+from .optim   import Scheduler
 from .plots   import plot_history
 
 class Trainer:
@@ -30,12 +30,15 @@ class Trainer:
         self.schedulers = []             # список шедулеров для управления обучением
         self.scheduler  = Scheduler()    # текущий шедулер
 
-        self.copy_best_model  = False    # копировать лучшую модель
-        self.model_best_score = None     # копия лучшей модели по score        
+        self.copy_best_score_model = False  # to copy the best model by val score
+        self.copy_best_loss_model  = False  # to copy the best model by val loss
+
+        self.best_score_model = None     # copy of the best model by val score
+        self.best_loss_model  = None     # copy of the best model by val loss
          
-        self.folder_loss   = None        # папка для сохранения лучших val loss  моделей
-        self.folder_score  = None        # папка для сохранения лучших val score моделей
-        self.folder_checks = None        # папка для сохранения чекпоинтов        
+        self.folder_loss   = None        # folder to save the best val loss models
+        self.folder_score  = None        # folder to save the best val score models
+        self.folder_checks = None        # folder to save checkpoints        
 
         # -------------------------------- настройки для построения графиков ошибок и метрик
         self.view = {                    
@@ -53,17 +56,20 @@ class Trainer:
                 'y_max' : None,          # fixing the maximum value on the y-axis
                 'ticks' : None,          # how many labels on the y-axis
                 'lr'    : True,          # show learning rate
-                'checks': True,          # show the achievement of the minimum loss (dots)
-                'labels': True,          # show labels (training events)
+                'labels': True,          # show labels (training events)                
+                'trn_checks': True,          # show the achievement of the minimum training loss (dots)
+                'val_checks': True,          # show the achievement of the minimum validation loss (dots)
+
             },
             'score': {                    
                 'show'  : True,          # show score subplot    
                 'y_min' : None,          # fixing the minimum value on the y-axis
                 'y_max' : None,          # fixing the maximum value on the y-axis
                 'ticks' : None,          # how many labels on the y-axis
-                'lr'    : True,          # show learning rate
-                'checks': True,          # show the achievement of the optimum score (dots)
+                'lr'    : True,          # show learning rate                
                 'labels': True,          # show labels (training events)
+                'trn_checks': True,      # show the achievement of the optimum training score (dots)                
+                'val_checks': True,      # show the achievement of the optimum validation score (dots)                
             }
         }
 
@@ -98,7 +104,7 @@ class Trainer:
     def add_label(self, text):
         """ Добавить пометку для графиков обучения """
         h = self.hist
-        self.hist( [ text, h['samples'], h['steps'], h['time_trn'], h['time_val'] ] )
+        self.hist['labels'].append( [ text, h['samples'], h['steps'], h['time_trn'], h['time_val'] ] )
 
     #---------------------------------------------------------------------------
 
@@ -120,7 +126,7 @@ class Trainer:
 
     def add_scheduler(self, scheduler):
         scheduler.optim = self.optim
-        self.schedulers.append(scheduler.optim)        
+        self.schedulers.append(scheduler)        
 
     def del_scheduler(self, i):
         self.schedulers.pop(i)
@@ -137,6 +143,13 @@ class Trainer:
     def stop_schedulers(self):
         for sch in self.schedulers:
             sch.enable = False            
+
+    def step_schedulers(self, samples_trn):
+        for sch in self.schedulers:
+            if sch.enable:
+                sch.step(samples_trn)
+                self.scheduler = sch
+                break
 
     #---------------------------------------------------------------------------
 
@@ -297,8 +310,9 @@ class Trainer:
     #---------------------------------------------------------------------------
 
     def run(self,  epochs =None,  samples=None,            
-            pre_val=False, period_val=1, period_plot=100,         
-            period_checks=1, period_val_beg = 4, samples_beg = None ): 
+            pre_val:bool=False, period_val:int=1, period_plot:int=100,         
+            period_checks:int=1, period_val_beg:int = 4, samples_beg:int = None,
+            period_call:int = 0, callback = None): 
         """
         Args:
             * epochs               - number of epochs for training (passes of one data_trn pack). If not defined (None) works "infinitely".
@@ -306,13 +320,15 @@ class Trainer:
             * pre_val              - validate before starting training
             * period_val           - period after which validation run (in epochs)
             * period_plot          - period after which the training plot is displayed (in epochs)
+            * period_call          - callback custom function call period
+            * callback             - custom function called with period_info
             * period_checks        - period after which checkpoints are made and the current model is saved (in epochs)
             * period_val_beg = 4   - validation period on the first samples_beg examples
             * samples_beg = None   - the number of samples from the start, after which the validation period will be equal to period_val.
         """
         assert self.optim is not None, "Define the optimizer first"
         self.set_optim_schedulers()        
-
+        self.model.to(self.device)
         if pre_val:
             losses, scores, counts, (samples_val, steps_val, tm_val) = self.fit(0, self.model, self.data_val, train=False)
             loss_val, score_val = self.mean(losses, scores, counts)
@@ -338,7 +354,7 @@ class Trainer:
                 self.hist['trn']['best_score'].append((self.hist['samples'], self.hist['steps'], score_trn[0].item()))
 
             period = period_val_beg if samples_beg and  self.hist['samples'] < samples_beg else period_val
-            if  epoch % period == 0 or epoch == epochs:
+            if  (period and epoch % period == 0) or epoch == epochs:
                 losses, scores, counts, (samples_val,steps_val,tm_val) = self.fit(epoch, self.model, self.data_val, train=False)
                 loss_val, score_val = self.mean(losses, scores, counts)
                 self.add_hist(self.hist['val'], self.data_val.batch_size, samples_val, steps_val, tm_val, loss_val, score_val, lr)
@@ -350,31 +366,37 @@ class Trainer:
                     self.hist['val']['best_loss'].append((self.hist['samples'], self.hist['steps'], loss_val))
                     if self.folder_loss:
                         self.save(self.model, folder=self.folder_loss, prefix=f"loss_{loss_val:.4f}_{self.now()}")
-
-                # save best validation score[0]
+                    if self.copy_best_loss_model:
+                        self.best_loss_model  = copy.deepcopy(self.model)
+                
                 if self.best_score(self.hist['best']['score_val'], score_val):
                     self.hist['best']['score_val'] = score_val[0]
                     self.hist['best']['samples_score_val'] = self.hist['samples']
                     self.hist['val']['best_score'].append( (self.hist['samples'], self.hist['steps'], score_val[0].item()) )
                     if self.folder_score:
                         self.save(self.model, folder=self.folder_score, prefix=f"score_{score_val[0]:.4f}_{self.now()}")
+                    if self.copy_best_score_model:
+                        self.best_score_model  = copy.deepcopy(self.model)
 
-                    if self.copy_best_model:         # копия лучшей модели по score
-                        self.model_best_score = copy.deepcopy(self.model)
-
-            if epoch % period_plot == 0 or epoch == epochs:
+            if (period_plot and epoch % period_plot == 0) or epoch == epochs:
                 self.run_progress()        
                 plot_history(self.hist, self.view) 
+            
+            if callback and period_call and epoch % period_call == 0:                
+                callback()
 
             if self.folder_checks and (epoch % period_checks == 0 or epoch == epochs):
                 self.save(self.model, folder=self.folder_checks, prefix="check_"+self.now())
 
-            self.scheduler.step(samples_trn)
+            self.step_schedulers(samples_trn)
 
             if samples is not None:
                 samples -= samples_trn
                 if samples <= 0:
-                    self.plot()
+                    self.run_progress()        
+                    plot_history(self.hist, self.view) 
+                    if callback:
+                        callback()
                     break
 
     #---------------------------------------------------------------------------
@@ -407,11 +429,6 @@ class Trainer:
             hist['loss']      .append(loss)
             if score is not None and len(score):
                 hist['score'] .append(score[0].item())
-
-    #---------------------------------------------------------------------------
-
-    def set_scheduler(self, enable=True, kind='exp', lr0=1e-3 ):
-        pass
 
     #---------------------------------------------------------------------------
 

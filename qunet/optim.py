@@ -118,7 +118,7 @@ class Scheduler:
 #-------------------------------------------------------------------------------
 
 
-class ConstScheduler(Scheduler):
+class Scheduler_Const(Scheduler):
     def __init__(self, lr1:float=None, samples:int=1000, enable:bool=True) -> None:
         """ 
         The scheduler sets the learning rate to lr1 and waits for `samples` samples
@@ -138,7 +138,7 @@ class ConstScheduler(Scheduler):
 
 #-------------------------------------------------------------------------------
 
-class LineScheduler(Scheduler):
+class Scheduler_Line(Scheduler):
     def __init__(self, lr1:float=None, lr2:float=1e-5, samples:int=1000, enable:bool=True) -> None:
         """ 
         Linear interpolation between lr1 and lr2 per sample samples
@@ -163,7 +163,7 @@ class LineScheduler(Scheduler):
 
 #-------------------------------------------------------------------------------
 
-class ExpScheduler(Scheduler):
+class Scheduler_Exp(Scheduler):
     def __init__(self, lr1:float=None, lr2:float=1e-5, samples:int=1000, enable:bool=True) -> None:
         """ 
         Exponential interpolation between lr1 and lr2 per sample samples.
@@ -189,7 +189,7 @@ class ExpScheduler(Scheduler):
 
 #-------------------------------------------------------------------------------
 
-class CosScheduler(Scheduler):
+class Scheduler_Cos(Scheduler):
     def __init__(self, lr1:float=None, lr_hot:float=5e-3,  lr2:float=1e-5, samples:int=1000, warmup:int=100, enable:bool=True) -> None:
         """
         Cosine curve with linear heating.
@@ -232,13 +232,13 @@ class CosScheduler(Scheduler):
 #===============================================================================
 
 if __name__ == '__main__':
-    #scheduler = CosScheduler(lr1=1e-4, lr_hot=1e-2, lr2=1e-3, samples=4000, warmup=1000)                
-    scheduler = ExpScheduler(lr1=1e-2,  lr2=1e-6, samples=4000)                
+    #scheduler = Scheduler_Cos(lr1=1e-4, lr_hot=1e-2, lr2=1e-3, samples=4000, warmup=1000)                
+    scheduler = Scheduler_Exp(lr1=1e-2,  lr2=1e-6, samples=4000)                
     #scheduler.plot(samples=4000, epochs=50, log=True, w=5, h=4, title="ExpScheduler")
     
     lst =[
-        CosScheduler(lr1=1e-4, lr_hot=1e-2, lr2=1e-3, samples=4000, warmup=1000),
-        ConstScheduler(lr1=1e-3, samples=2000),
-        ExpScheduler  (lr1=1e-3, lr2=1e-5, samples=4000)
+        Scheduler_Cos  (lr1=1e-4, lr_hot=1e-2, lr2=1e-3, samples=4000, warmup=1000),
+        Scheduler_Const(lr1=1e-3, samples=2000),
+        Scheduler_Exp  (lr1=1e-3, lr2=1e-5, samples=4000)
     ]
     scheduler.plot_list(lst, samples=10000, epochs=50, log=True, w=5, h=4, title="Cos, Const, Exp Schedulers")

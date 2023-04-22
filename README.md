@@ -144,9 +144,10 @@ Other properties of `Trainer` allow you to customize the appearance of graphs, s
 They will be discussed in the relevant sections.
 
 ```python
-trainer.run(epochs=None, samples=None,
-            pre_val=False,  period_val=1, period_plot=100, period_checks=1,          
-            period_val_beg = 4, samples_beg = None)
+trainer.run(epochs =None,  samples=None,            
+            pre_val=False, period_val=1, period_plot=100,         
+            period_checks=1, period_val_beg = 4, samples_beg = None,
+            period_call:int = 0, callback = None):     
 ```
 
 * `epochs`         - number of epochs for training (passes of one data_trn pack). If not defined (None) works "infinitely".
@@ -154,6 +155,8 @@ trainer.run(epochs=None, samples=None,
 * `pre_val`        - validate before starting training
 * `period_val`     - period after which validation run (in epochs)
 * `period_plot`    - period after which the training plot is displayed (in epochs)
+* `period_call`    - callback custom function call period
+* `callback`       - custom function called with period_info
 * `period_checks`  - period after which checkpoints are made and the current model is saved (in epochs)
 * `period_val_beg` - validation period on the first `samples_beg` samples. Used when validation needs to be done less frequently at the start of training.
 * `samples_beg`   -  the number of samples from the start, after which the validation period will be equal to `period_val`
@@ -181,9 +184,10 @@ trainer.view = {
         'y_min' : None,          # fixing the minimum value on the y-axis
         'y_max' : None,          # fixing the maximum value on the y-axis
         'ticks' : None,          # how many labels on the y-axis
-        'lr'    : True,          # show learning rate
-        'checks': True,          # show the achievement of the minimum loss (dots)
+        'lr'    : True,          # show learning rate        
         'labels': True,          # show labels (training events)
+        'trn_checks': True,      # show the achievement of the minimum training loss (dots)
+        'val_checks': True,      # show the achievement of the minimum validation loss (dots)
     },
 
     'score': {                    
@@ -192,8 +196,9 @@ trainer.view = {
         'y_max' : None,          # fixing the maximum value on the y-axis
         'ticks' : None,          # how many labels on the y-axis
         'lr'    : True,          # show learning rate
-        'checks': True,          # show the achievement of the optimum score (dots)
         'labels': True,          # show labels (training events)
+        'trn_checks': True,      # show the achievement of the optimum training score (dots)                
+        'val_checks': True,      # show the achievement of the optimum validation score (dots)                
     }
 }
 ```
@@ -206,14 +211,14 @@ trainer.view = {
 Schedulers allow you to control the learning process by changing the learning rate according to the required algorithm.
 There can be one or more schedulers. In the latter case, they are processed sequentially one after another.
 Существуют следующие шедулеры:
-* `LineScheduler(lr1, lr2, samples)` - changes the learning rate from `lr1` to `lr2` over `samples` training samples. If `lr1` is not specified, the optimizer's current lr is used for it.
-* `ExpScheduler(lr1, lr2, samples)` - similar, but changing `lr` from `lr1` to `lr2` is exponential.
-* `CosScheduler(lr1, lr_hot,  lr2, samples, warmup)` - changing `lr` by cosine with preliminary linear heating during `warmup` samples from `lr1` to `lr_hot`.
-* `WaitScheduler(lr1, samples)` - wait for `samples` samples with unchanged `lr` (as usual, the last value is taken if `lr1` is not set). This scheduler is useful when using lists of schedulers.
+* `Scheduler_Line(lr1, lr2, samples)` - changes the learning rate from `lr1` to `lr2` over `samples` training samples. If `lr1` is not specified, the optimizer's current lr is used for it.
+* `Scheduler_Exp(lr1, lr2, samples)` - similar, but changing `lr` from `lr1` to `lr2` is exponential.
+* `Scheduler_Cos(lr1, lr_hot,  lr2, samples, warmup)` - changing `lr` by cosine with preliminary linear heating during `warmup` samples from `lr1` to `lr_hot`.
+* `Scheduler_Const(lr1, samples)` - wait for `samples` samples with unchanged `lr` (as usual, the last value is taken if `lr1` is not set). This scheduler is useful when using lists of schedulers.
 
 Each scheduler has a `plot` method that can be used to display the training plot:
 ```python
-sch = CosScheduler(lr1=1e-5, lr_hot=1e-2, lr2=1e-4,  samples=100e3, warmup=1e3)
+sch = Scheduler_Cos(lr1=1e-5, lr_hot=1e-2, lr2=1e-4,  samples=100e3, warmup=1e3)
 sch.plot(log=True)
 ```
 You can also call the `trainer.plot_schedulers()` method of the `Trainer` class.
@@ -234,20 +239,38 @@ Example:
 <img src="img/schedulers.png">
 <hr>
 
-## Checkpoints and best model
+## Best Model and Checkpoints
+
+If you set these flags to `True`, then `Trainer` will save the last best model by validation score and loss:
+```python
+trainer.copy_best_score_model = True  # to copy the best model by val score
+trainer.copy_best_loss_model  = True  # to copy the best model by val loss
+```
+These models can be used to roll back if something went wrong (similarly for `trainer.best_loss_model`):
+```python
+train.model = copy.deepcopy(trainer.best_score_model)   
+```
+
+If the following folder is defined (by default `None`), then the best model by validation loss, score will be saved on disk and intermediate versions of the model will be saved with the period `period_checks` (argument of `run` function).
+```python
+trainer.folder_loss   = "models/best_loss"   # folder to save the best val loss models
+trainer.folder_score  = "models/best_score"  # folder to save the best val score models
+trainer.folder_checks = "models/checkpoints" # folder to save checkpoints        
+```
+The best score is the metric of the first column of the second return tensor in the metrics function of the model.
+If `trainer.score_max=True`, then the higher the score, the better (for example, accuracy).
+<hr>
+
+## Batch Argumentation
 
 <hr>
 
-## Batch argumentation
+
+## Working with the Large Models
 
 <hr>
 
-
-## Working with large models
-
-<hr>
-
-## Model state visualization
+## Model State Visualization
 
 <hr>
 
