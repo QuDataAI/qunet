@@ -63,12 +63,19 @@ class Model(nn.Module):
         errors = torch.abs(y_pred.detach()-y_true)   # (B,1)  one metric
         return loss, errors                          # ()  (B,1)
 ```
+
+**Attention**: If the output of the model is one, after the Linear layer the tensor has the shape (B,1).
+Therefore, the target data must also have the form (B,1), otherwise we will get an incorrect loss.
+```python
+X,Y = torch.arange(5).view(-1,1).to(torch.float32),  torch.arange(5).to(torch.float32)
+loss = (X-Y).pow(2).mean()  # 4 так как (B,1) - (B,) = (B,1) - (1,B) = (B,B)
+```
 <hr>
 
 ## Data
 
 The `Data` - training or validation data class. It can be overridden or pytorch DataLoader can be used.
-For  `Trainer` to work in the `__next__` iterator, the `Data` instance must return an `X,Y` tuple, where:
+Iterator `__next__` of the `Data`  must return an `X,Y` tuple, where:
 * X - tensor or tuple (list) of tensors for model input,
 * Y - tensor or tuple (list) of tensors for model target values.
 
@@ -77,7 +84,7 @@ For example, let's create training data in which two tensors X1,X2 are the input
 X1, X2 = np.rand(1000,3), np.rand(1000,3,20)
 Y = X1 * torch.Sigmoid(X2).mean(-1)
 
-data_trn = Data(dataset=( (X1,X2), Y ),  shuffle=True)  
+data_trn = Data( dataset=( (X1,X2), Y ) )  
 ```        
 The data minibatch tuple (X,Y) is used in the Trainer as follows:
 ```python
@@ -131,9 +138,10 @@ trainer = Trainer(model, data_trn, data_val, device=None, dtype=torch.float32, s
 * `model`     - model for traininig;
 * `data_trn`  - training data (Data or DataLoader instance);
 * `data_val`  - data for validation (instance of Data or DataLoader); may be missing;
-* `device`    - device to compute ('cuda', 'cpu'); default is determined automatically;
-* `dtype`     - data type and model parameters (torch.float32 or float16), see training large models;
 * `score_max` - consider that the metric (the first column of the second tensor returned by the function `metrics` of the model ); should strive to become the maximum (for example, so for accuracy).
+
+Other properties of `Trainer` allow you to customize the appearance of graphs, save models, manage training, and so on.
+They will be discussed in the relevant sections.
 
 ```python
 trainer.run(epochs=None, samples=None,
@@ -155,6 +163,41 @@ trainer.run(epochs=None, samples=None,
 ## Visualization of the training process
 
 <img src="img/loss.png">
+
+
+```python
+trainer.view = {                    
+    'w'            : 12,         # plt-plot width
+    'h'            :  5,         # plt-plot height
+
+    'count_units'  : 1e6,        # units for number of samples
+    'time_units'   : 's',        # time units: ms, s, m, h
+
+    'x_min'        : 0,          # minimum value in samples on the x-axis (if < 0 last x_min samples)
+    'x_max'        : None,       # maximum value in samples on the x-axis (if None - last)
+
+    'loss': {                                
+        'show'  : True,          # show loss subplot
+        'y_min' : None,          # fixing the minimum value on the y-axis
+        'y_max' : None,          # fixing the maximum value on the y-axis
+        'ticks' : None,          # how many labels on the y-axis
+        'lr'    : True,          # show learning rate
+        'checks': True,          # show the achievement of the minimum loss (dots)
+        'labels': True,          # show labels (training events)
+    },
+
+    'score': {                    
+        'show'  : True,          # show score subplot    
+        'y_min' : None,          # fixing the minimum value on the y-axis
+        'y_max' : None,          # fixing the maximum value on the y-axis
+        'ticks' : None,          # how many labels on the y-axis
+        'lr'    : True,          # show learning rate
+        'checks': True,          # show the achievement of the optimum score (dots)
+        'labels': True,          # show labels (training events)
+    }
+}
+```
+
 
 <hr>
 
@@ -187,9 +230,15 @@ This group of methods works with all schedulers:
 * `clear_schedulers`() - clear list of schedulers
 Example:
 
+
+<img src="img/schedulers.png">
 <hr>
 
 ## Checkpoints and best model
+
+<hr>
+
+## Batch argumentation
 
 <hr>
 

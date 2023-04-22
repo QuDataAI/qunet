@@ -1,107 +1,142 @@
-﻿"""
-Предполагается следующая абстракция:
-Модель получает ненулевой кортеж  небходимых данных data=(X,Y,...):
-В forward она возвращает кортеж  (float, тензор, тензор):
-    Model.forward(data):
-        return output, loss, score
-где
-    loss   : float = ошибка по батчу с графом для обратного распространения (скаляр!)
-    output : (B,*) результат работы модели (без графа), B - число примеров в батче
-    score  : None or (B,1) or (B,n) - метрики качества работы (без графа)
-Если метрик score нет, то  модель для них должна вернуть None. Если метрика одна - тензор (B,1).
-Если нужны ошибки по каждому примеру, помещаем их в score, но loss всё равно оставляем скалярным.
-
-Внимание:
-    Если выход модели один, после слоя Linear тензор имеет форму (B,1)
-    Поэтому таргетные данные также должны иметь форму (B,1), иначе получим неверный loss.
-    X, = torch.arange(5).view(-1,1).to(torch.float32),  torch.arange(5).to(torch.float32)
-    loss = (X-Y).pow(2).mean()  # 4 так как (B,1) - (B,) = (B,1) - (1,B) = (B,B)
-"""
-import os, math, copy, time, datetime
+﻿import os, math, copy, time, datetime
 from   tqdm.auto import tqdm
 import numpy as np, matplotlib.pyplot as plt
 import torch, torch.nn as nn
 
-from .optim   import LineScheduler, ExpScheduler, CosScheduler
-from .plotter import Plotter
+from .optim   import Scheduler, LineScheduler, ExpScheduler, CosScheduler
+from .plots   import plot_history
 
 class Trainer:
     """
-    Универсальный класс обучения модели.
-    Любой метод можно, естественно, переопределить наследованием или у экземпляра.
+    Generic model training class.
+    Any method can, of course, be overridden by inheritance or by an instance.
     """
-    def __init__(self, model, data_trn, data_val, device=None, dtype=torch.float32, score_max=False) -> None:
-        self.model = model
-        self.device = device or "cuda" if torch.cuda.is_available() else "cpu"
-        self.dtype  = dtype
-        self.optim  = None
-        self.scheduler = ExpScheduler()
-        self.data_trn = data_trn
-        self.data_val = data_val
+    def __init__(self, model, data_trn, data_val, score_max=False) -> None:
+        """
+        Args:
+            * model     - model for traininig;
+            * data_trn  - training data (Data or DataLoader instance);
+            * data_val  - data for validation (instance of Data or DataLoader); may be missing;
+            * score_max - consider that the metric (the first column of the second tensor returned by the function `metrics` of the model ); should strive to become the maximum (for example, so for accuracy).            
+        """
+        self.model      = model
+        self.data_trn   = data_trn
+        self.data_val   = data_val
+        self.score_max = score_max       # метрика должна быть максимальной (например accuracy)
 
-        self.score_max = score_max      # метрика должна быть максимальной (например accuracy)
+        self.device     = "cuda" if torch.cuda.is_available() else "cpu"         
+        self.dtype      = torch.float32 # see training large models;
+        self.optim      = None
+        self.schedulers = []             # список шедулеров для управления обучением
+        self.scheduler  = Scheduler()    # текущий шедулер
 
-        self.best_loss_val  = None      # лучшее значение валидационной ошибки
-        self.best_loss_trn  = None      # лучшее значение тренировочная ошибки
-        self.best_score_val = None      # лучшее значение валидационной метрики (первой)
-        self.best_score_trn = None      # лучшее значение тенировочной метрики (первой)
-        self.samples_best_loss_val = 0  # когда была лучшая валидационная ошибка
-        self.samples_best_loss_trn = 0  # когда была лучшая тренировочная ошибка
-        self.samples_best_score_val= 0  # когда была лучшая валиадционная метрика
-        self.samples_best_score_trn= 0  # когда была лучшая тренировочная метрика
+        self.copy_best_model  = False    # копировать лучшую модель
+        self.model_best_score = None     # копия лучшей модели по score        
+         
+        self.folder_loss   = None        # папка для сохранения лучших val loss  моделей
+        self.folder_score  = None        # папка для сохранения лучших val score моделей
+        self.folder_checks = None        # папка для сохранения чекпоинтов        
 
-        self.samples  = 0               # число примеров в режиме обучения
-        self.steps    = 0               # число шагов градиентного спуска
+        # -------------------------------- настройки для построения графиков ошибок и метрик
+        self.view = {                    
+            'w'            : 12,         # plt-plot width
+            'h'            :  5,         # plt-plot height
+            'count_units'  : 1e6,        # units for number of samples
+            'time_units'   : 's',        # time units: ms, s, m, h
 
-        # история обучения и валидации
-        self.hist_trn = {'samples':[], 'steps':[], 'batch_size':[], 'lr':[], 'samples_epoch':[], 'steps_epoch':[], 'time':[], 'loss':[], 'score':[], 'best_loss':[], 'best_score':[] }
-        self.hist_val = {'samples':[], 'steps':[], 'batch_size':[], 'lr':[], 'samples_epoch':[], 'steps_epoch':[], 'time':[], 'loss':[], 'score':[], 'best_loss':[], 'best_score':[] }
-        self.labels   = []
+            'x_min'        : 0,          # minimum value in samples on the x-axis (if < 0 last x_min samples)
+            'x_max'        : None,       # maximum value in samples on the x-axis (if None - last)
 
-        self.time_trn = 0               # общее время тренировки
-        self.time_val = 0               # общее время валидациии
-
-        self.model_best_score = None    # копия лучшей модели по score
-        self.copy_best_model  = False   # копировать лучшую модель
-
-        self.plotter = Plotter()        # класс рисования графиков
-
-        self.cfg = {
-            'folder_loss'  : None,      # папка для сохранения лучших val loss  моделей
-            'folder_score' : None,      # папка для сохранения лучших val score моделей
-            'folder_checks': None,      # папка для сохранения чекпоинтов
-            'count_units'  : 1e6,       # единицы измерения числа примеров
-            'time_units'   : 's',       # единицы измерения времени: ms, s, m, h
-            'x_min'        : 0,         # дипазон графика в samples по x (если < 0 последние x_min sampes)
-            'x_max':         None,
-            'plot_loss': {
-                'show':  True,
-                'y_min': None, 'y_max': None,
-                'ticks': None,
+            'loss': {                                
+                'show'  : True,          # show loss subplot
+                'y_min' : None,          # fixing the minimum value on the y-axis
+                'y_max' : None,          # fixing the maximum value on the y-axis
+                'ticks' : None,          # how many labels on the y-axis
+                'lr'    : True,          # show learning rate
+                'checks': True,          # show the achievement of the minimum loss (dots)
+                'labels': True,          # show labels (training events)
             },
-            'plot_score': {
-                'show':  True,
-                'y_min': None, 'y_max': None,
-                'ticks': None,
+            'score': {                    
+                'show'  : True,          # show score subplot    
+                'y_min' : None,          # fixing the minimum value on the y-axis
+                'y_max' : None,          # fixing the maximum value on the y-axis
+                'ticks' : None,          # how many labels on the y-axis
+                'lr'    : True,          # show learning rate
+                'checks': True,          # show the achievement of the optimum score (dots)
+                'labels': True,          # show labels (training events)
             }
         }
+
+        # -------------------------------- история и текущие метрики процесса обучения модели
+        self.hist = {                    # история обучения и валидации:
+            'samples': 0,                # число примеров в режиме обучения
+            'steps'  : 0,                # число шагов градиентного спуска
+
+            'time_trn': 0,               # общее время тренировки
+            'time_val': 0,               # общее время валидациии
+
+            'best':  {
+                'loss_val': None,        # лучшее значение валидационной ошибки
+                'loss_trn': None,        # лучшее значение тренировочная ошибки
+                'score_val': None,       # лучшее значение валидационной метрики (первой)
+                'score_trn': None,       # лучшее значение тенировочной метрики (первой)
+
+                'samples_loss_val': 0,   # когда была лучшая валидационная ошибка
+                'samples_loss_trn': 0,   # когда была лучшая тренировочная ошибка
+                'samples_score_val': 0,  # когда была лучшая валиадционная метрика
+                'samples_score_trn': 0,  # когда была лучшая тренировочная метрика
+            },
+
+            'trn'    : {'samples':[], 'steps':[], 'batch_size':[], 'lr':[], 'samples_epoch':[], 'steps_epoch':[], 'time':[], 'loss':[], 'score':[], 'best_loss':[], 'best_score':[] },
+            'val'    : {'samples':[], 'steps':[], 'batch_size':[], 'lr':[], 'samples_epoch':[], 'steps_epoch':[], 'time':[], 'loss':[], 'score':[], 'best_loss':[], 'best_score':[] },
+            'labels' : []
+        }    
+        self.hist['params'] = sum(p.numel() for p in model.parameters() if p.requires_grad)        
+
+    #---------------------------------------------------------------------------
+
+    def add_label(self, text):
+        """ Добавить пометку для графиков обучения """
+        h = self.hist
+        self.hist( [ text, h['samples'], h['steps'], h['time_trn'], h['time_val'] ] )
 
     #---------------------------------------------------------------------------
 
     def set_optimizer(self, optim):
         """ Установить текущий оптимизатор """
         self.optim = optim
-        self.scheduler.optim = optim
+        self.set_optim_schedulers()
+
+    def set_optim_schedulers(self):
+        self.scheduler.optim = self.optim
+        for sch in self.schedulers:
+            sch.optim = self.optim
 
     #---------------------------------------------------------------------------
 
+    def set_scheduler(self, scheduler):
+        self.schedulers = []
+        self.add_scheduler(scheduler)
+
     def add_scheduler(self, scheduler):
-        """
-        Установить текущий оптимизатор. todo: список шедулеров
-        """
-        assert self.optim is not None, "Define the optimizer first"
-        self.scheduler = scheduler
-        self.scheduler.optim = self.optim
+        scheduler.optim = self.optim
+        self.schedulers.append(scheduler.optim)        
+
+    def del_scheduler(self, i):
+        self.schedulers.pop(i)
+
+    def clear_schedulers(self):
+        self.scheduler = Scheduler(self.optim)        
+        self.schedulers = []
+
+    def reset_schedulers(self):
+        for sch in self.schedulers:
+            sch.enable = True
+            sch.done   = 0
+
+    def stop_schedulers(self):
+        for sch in self.schedulers:
+            sch.enable = False            
 
     #---------------------------------------------------------------------------
 
@@ -131,7 +166,7 @@ class Trainer:
             self.optim.zero_grad()                  # обнуляем градиенты
 
         samples, steps, beg, lst = 0, 0, time.time(), time.time()
-        counts_all, losses_all,  scores_all = torch.empty((0,1)), None,  None
+        counts_all, losses_all,  scores_all = torch.empty(0,1), None,  None
         for b, (x, y_true) in enumerate(data):
             num = len(x[0]) if type(x) is list or type(x) is tuple else len(x)
             x, y_true = self.to_device(x), self.to_device(y_true)
@@ -156,11 +191,11 @@ class Trainer:
                         scaler.step(self.optimizer) # подправляем параметры
                         scaler.update()             # Updates the scale for next iteration
                     self.optim.zero_grad()          # обнуляем градиенты
-                    steps      += 1                 # число сделанных шагов
-                    self.steps += 1                 # число сделанных шагов за всё время
-                self.samples += num                 # число просмотренных примеров за всё время
+                    steps      += 1                 # шагов за эпоху
+                    self.hist['steps'] += 1         # шагов за всё время
+                self.hist['samples'] += num         #  примеров за всё время
 
-            samples += num                      # число просмотренных примеров за эпоху
+            samples += num                          # просмотренных примеров за эпоху
             losses_all = loss.detach() if losses_all is None else torch.vstack([losses_all, loss.detach()])
             if scores is not None:
                 scores = scores.detach().mean(dim=0)
@@ -172,12 +207,12 @@ class Trainer:
                 self.fit_progress(epoch, train, (b+1)/len(data),
                                   losses_all, scores_all, counts_all, samples, steps, time.time()-beg)
 
-        if train: self.time_trn += (time.time()-beg)
-        else:     self.time_val += (time.time()-beg)
+        if train: self.hist['time_trn'] += (time.time()-beg)
+        else:     self.hist['time_val'] += (time.time()-beg)
 
         if scores_all is not None:
             scores_all = scores_all.cpu()
-        return losses_all.cpu(), scores_all, counts_all, (samples,steps,time.time()-beg)
+        return losses_all.cpu(), scores_all, counts_all, (samples, steps, time.time()-beg)
 
     #---------------------------------------------------------------------------
 
@@ -212,10 +247,10 @@ class Trainer:
 
     def unit_scales(self):
         """ Единичы измерения числа примеров и времени """
-        cfg = self.cfg
-        t_unit = cfg['time_units'] if 'time_units' in cfg and cfg['time_units'] in ['ms','s','m','h']  else 's'
+        view = self.view
+        t_unit = view['time_units'] if 'time_units' in view and view['time_units'] in ['ms','s','m','h']  else 's'
         t_unit_scale = dict(ms=1e-3, s=1, m=60, h=3600)[t_unit]
-        c_unit = cfg['count_units'] if cfg.get('count_units',0) > 0  else 1
+        c_unit = view['count_units'] if view.get('count_units',0) > 0  else 1
         c_unit_power = round(np.log10(c_unit), 0)
         return t_unit, t_unit_scale,  c_unit, c_unit_power
 
@@ -276,12 +311,12 @@ class Trainer:
             * samples_beg = None   - the number of samples from the start, after which the validation period will be equal to period_val.
         """
         assert self.optim is not None, "Define the optimizer first"
-        self.scheduler.optim = self.optim
+        self.set_optim_schedulers()        
 
         if pre_val:
             losses, scores, counts, (samples_val, steps_val, tm_val) = self.fit(0, self.model, self.data_val, train=False)
             loss_val, score_val = self.mean(losses, scores, counts)
-            self.add_hist(self.hist_val, self.data_val.batch_size, samples_val, steps_val, tm_val, loss_val, score_val, self.scheduler.get_lr())
+            self.add_hist(self.hist['val'], self.data_val.batch_size, samples_val, steps_val, tm_val, loss_val, score_val, self.scheduler.get_lr())
             print()
 
         epochs = epochs or 1_000_000
@@ -290,52 +325,49 @@ class Trainer:
             losses, scores, counts, (samples_trn,steps_trn,tm_trn) = self.fit(epoch, self.model, self.data_trn, train=True)
             loss_trn, score_trn = self.mean(losses, scores, counts)
             lr = self.scheduler.get_lr()
-            self.add_hist(self.hist_trn, self.data_trn.batch_size, samples_trn, steps_trn, tm_trn, loss_trn, score_trn, lr)
+            self.add_hist(self.hist['trn'], self.data_trn.batch_size, samples_trn, steps_trn, tm_trn, loss_trn, score_trn, lr)
 
-            if self.best_loss_trn is None or self.best_loss_trn > loss_trn:
-                self.best_loss_trn = loss_trn
-                self.samples_best_loss_trn = self.samples
-                self.hist_trn['best_loss'].append( (self.samples, self.steps, loss_trn) )
-            if self.best_score_trn is None or self.best_score_trn > score_trn[0]:
-                self.best_score_trn = score_trn[0]
-                self.samples_best_score_trn = self.samples
-                self.hist_trn['best_score'].append((self.samples, self.steps, score_trn[0].item()))
+            if self.hist['best']['loss_trn'] is None or self.hist['best']['loss_trn'] > loss_trn:
+                self.hist['best']['loss_trn'] = loss_trn
+                self.hist['best']['samples_loss_trn'] = self.hist['samples']
+                self.hist['trn']['best_loss'].append( (self.hist['samples'], self.hist['steps'], loss_trn) )
 
-            period = period_val_beg if samples_beg and  self.samples < samples_beg else period_val
+            if self.best_score(self.hist['best']['score_trn'], score_trn):            
+                self.hist['best']['score_trn'] = score_trn[0]
+                self.hist['best']['samples_score_trn'] = self.hist['samples']
+                self.hist['trn']['best_score'].append((self.hist['samples'], self.hist['steps'], score_trn[0].item()))
+
+            period = period_val_beg if samples_beg and  self.hist['samples'] < samples_beg else period_val
             if  epoch % period == 0 or epoch == epochs:
                 losses, scores, counts, (samples_val,steps_val,tm_val) = self.fit(epoch, self.model, self.data_val, train=False)
                 loss_val, score_val = self.mean(losses, scores, counts)
-                self.add_hist(self.hist_val, self.data_val.batch_size, samples_val, steps_val, tm_val, loss_val, score_val, lr)
+                self.add_hist(self.hist['val'], self.data_val.batch_size, samples_val, steps_val, tm_val, loss_val, score_val, lr)
 
                 # save best validation loss:
-                if self.best_loss_val is None or self.best_loss_val > loss_val:
-                    self.best_loss_val = loss_val
-                    self.samples_best_loss_val = self.samples
-                    self.hist_val['best_loss'].append((self.samples, self.steps, loss_val))
-                    if self.cfg.get('folder_loss', False):
-                        self.save(self.model, folder=self.cfg['folder_loss'], prefix=f"loss_{loss_val:.4f}_{self.now()}")
+                if self.hist['best']['loss_val'] is None or self.hist['best']['loss_val'] > loss_val:
+                    self.hist['best']['loss_val'] = loss_val
+                    self.hist['best']['samples_loss_val'] = self.hist['samples']
+                    self.hist['val']['best_loss'].append((self.hist['samples'], self.hist['steps'], loss_val))
+                    if self.folder_loss:
+                        self.save(self.model, folder=self.folder_loss, prefix=f"loss_{loss_val:.4f}_{self.now()}")
 
                 # save best validation score[0]
-                if score_val is not None  and len(score_val) \
-                and (self.best_score_val is None \
-                     or (self.best_score_val < score_val[0] and self.score_max) \
-                     or (self.best_score_val > score_val[0] and not self.score_max)
-                ):
-                    self.best_score_val = score_val[0]
-                    self.samples_best_score_val = self.samples
-                    self.hist_val['best_score'].append( (self.samples, self.steps, score_val[0].item()) )
-                    if self.cfg.get('folder_score', False):
-                        self.save(self.model, folder=self.cfg['folder_score'], prefix=f"score_{score_val[0]:.4f}_{self.now()}")
+                if self.best_score(self.hist['best']['score_val'], score_val):
+                    self.hist['best']['score_val'] = score_val[0]
+                    self.hist['best']['samples_score_val'] = self.hist['samples']
+                    self.hist['val']['best_score'].append( (self.hist['samples'], self.hist['steps'], score_val[0].item()) )
+                    if self.folder_score:
+                        self.save(self.model, folder=self.folder_score, prefix=f"score_{score_val[0]:.4f}_{self.now()}")
 
                     if self.copy_best_model:         # копия лучшей модели по score
                         self.model_best_score = copy.deepcopy(self.model)
 
             if epoch % period_plot == 0 or epoch == epochs:
-                print(f"\ntime = (trn:{self.time_trn/60:.2f}, val:{self.time_val/60:.2f}, tot:{(self.time_trn+self.time_val)/60:.2f})m  lr:{self.scheduler.get_lr():.1e}")
-                self.plot()
+                self.run_progress()        
+                plot_history(self.hist, self.view) 
 
-            if self.cfg.get('folder_checks', False) and (epoch % period_checks == 0 or epoch == epochs):
-                self.save(self.model, folder="", prefix="check_"+self.now())
+            if self.folder_checks and (epoch % period_checks == 0 or epoch == epochs):
+                self.save(self.model, folder=self.folder_checks, prefix="check_"+self.now())
 
             self.scheduler.step(samples_trn)
 
@@ -345,12 +377,17 @@ class Trainer:
                     self.plot()
                     break
 
+    #---------------------------------------------------------------------------
+
+    def run_progress(self):
+        print(f"\ntime = (trn:{self.hist['time_trn']/60:.2f}, val:{self.hist['time_val']/60:.2f}, tot:{(self.hist['time_trn']+self.hist['time_val'])/60:.2f})m  lr:{self.scheduler.get_lr():.1e}")
+    #---------------------------------------------------------------------------
             
-    def plot(self):
-        self.plotter.plot(self.cfg, self.model, data=dict(
-                            hist_val=self.hist_val, hist_trn=self.hist_trn, labels=self.labels,
-                            samples = self.samples, steps = self.steps)
-                        )
+    def best_score(self, best, score):
+        return score is not None  and len(score) \
+                and (best is None \
+                or (best < score[0] and     self.score_max) \
+                or (best > score[0] and not self.score_max) )
 
     #---------------------------------------------------------------------------
 
@@ -360,8 +397,8 @@ class Trainer:
     #---------------------------------------------------------------------------
 
     def add_hist(self, hist, batch_size, samples, steps, tm, loss, score, lr):
-            hist['samples']   .append(self.samples)
-            hist['steps']     .append(self.steps)
+            hist['samples']   .append(self.hist['samples'])
+            hist['steps']     .append(self.hist['steps'])
             hist['samples_epoch']   .append(samples)
             hist['steps_epoch']     .append(steps)
             hist['batch_size'].append(batch_size)
@@ -387,18 +424,7 @@ class Trainer:
             'config':          cfg,                       # конфигурация модели
             'model' :          model.state_dict(),        # параметры модели
             'optimizer':       optim.state_dict() if optim is not None else None,
-
-            'data': {                                     # история обучения
-                'steps':           self.steps,
-                'samples':         self.samples,
-                'hist_trn':        self.hist_trn,
-                'hist_val':        self.hist_val,
-                'labels':          self.labels,
-                'best_loss_val':   self.best_loss_val,
-                'best_loss_trn':   self.best_loss_trn,
-                'best_score_val':  self.best_score_val,
-                'best_score_trn':  self.best_score_trn,
-            }
+            'hist':            self.hist,
         }
         torch.save(state, fname)
 
