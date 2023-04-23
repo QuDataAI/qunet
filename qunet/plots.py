@@ -19,6 +19,7 @@ def plot_histogram( x, x_sub, pref="", digits=1, w=12, h=3, bins=50, bins_sub=10
     plt.show()
 
 #---------------------------------------------------------------------------
+
 def plot_history(hist, view):
     """
     """    

@@ -174,7 +174,10 @@ class Trainer:
         self.model.train(train)                     # режим обучение или тестирование
         torch.set_grad_enabled(train)               # строить или нет вычислительный граф
 
-        scaler = torch.cuda.amp.GradScaler() if torch.cuda.is_available() else None
+        scaler = None
+        if torch.cuda.is_available() and self.dtype != torch.float32:
+            scaler = torch.cuda.amp.GradScaler()
+
         if train:
             self.optim.zero_grad()                  # обнуляем градиенты
 
@@ -201,7 +204,7 @@ class Trainer:
                     if scaler is None:
                         self.optim.step()
                     else:
-                        scaler.step(self.optimizer) # подправляем параметры
+                        scaler.step(self.optim)     # подправляем параметры
                         scaler.update()             # Updates the scale for next iteration
                     self.optim.zero_grad()          # обнуляем градиенты
                     steps      += 1                 # шагов за эпоху
@@ -211,7 +214,9 @@ class Trainer:
             samples += num                          # просмотренных примеров за эпоху
             losses_all = loss.detach() if losses_all is None else torch.vstack([losses_all, loss.detach()])
             if scores is not None:
-                scores = scores.detach().mean(dim=0)
+                scores = scores.detach()
+                assert scores.dim() == 2, f"model must has tensor score in function metrics with dim==2, but got {scores.dim()}"
+                scores = scores.mean(dim=0)
                 scores_all = scores if scores_all is None else torch.vstack([scores_all, scores])
             counts_all = torch.vstack([counts_all, torch.Tensor([num])])
 
@@ -271,41 +276,44 @@ class Trainer:
 
     def predict(self, model, data, verbose:bool = True, whole=False):
         """
-        Вычислить предлсказание, ошибку и метрику для каждого примера в data
-        todo: выдели сразу память
+        Вычислить предсказание, ошибку и метрику для каждого примера в data        
         """
         self.model.train(False)          # режим тестирование
         torch.set_grad_enabled(False)    # вычислительный граф не строим
         data.whole = whole               # обычно по всем примерам (и по дробному батчу)
 
-        samples, steps, beg, lst = 0, 0, time.time(), time.time()
-        counts_all, losses_all, scores_all, output_all = torch.empty((0,1)), None,  None, None
+        samples, beg, lst = 0, time.time(), time.time()
+        scores_all, output_all = None, None
 
-        scaler = torch.cuda.amp.GradScaler() if torch.cuda.is_available() else None
-        for b, (x,y_true) in enumerate(data):
+        scaler = None
+        if torch.cuda.is_available() and self.dtype != torch.float32:
+            scaler = torch.cuda.amp.GradScaler()
+        for b, (x, y_true) in enumerate(data):
+            num = len(x[0]) if type(x) is list or type(x) is tuple else len(x)
+            x, y_true = self.to_device(x), self.to_device(y_true)
+
             if scaler is None:
                 y_pred = model(x)
-                loss, scores = model.metrics(x, y_pred, y_true)
+                _, scores = model.metrics(x, y_pred, y_true)
             else:
                 with torch.autocast(device_type=self.device, dtype=self.dtype):
                     y_pred = model(x)
-                    loss, scores = model.metrics(x, y_pred, y_true)
-
-            num = len(x[0]) if type(x) is list or type(x) is tuple else len(x)
-            samples += num                      # число просмотренных примеров за эпоху
-            losses_all = loss.detach() if losses_all is None else torch.vstack([losses_all, loss.detach()])
+                    _, scores = model.metrics(x, y_pred, y_true)
+            
+            samples += num                      # число просмотренных примеров за эпоху            
             if scores is not None:
-                scores = scores.detach().mean(dim=0)
-                scores_all = scores if scores_all is None else torch.vstack([scores_all, scores])
-            counts_all = torch.vstack([counts_all, torch.Tensor([num])])
+                scores = scores.detach()
+                assert scores.dim() == 2, f"model must has tensor score in function metrics with dim==2, but got {scores.dim()}"
+                scores_all = scores if scores_all is None else torch.vstack([scores_all, scores])            
+            output_all = y_pred.detach() if output_all is None else torch.vstack([output_all, y_pred.detach() ])            
 
             if verbose and (time.time()-lst > 1 or b+1 == len(data) ):
                 lst = time.time()
-                self.fit_progress(0, False, (b+1)/len(data), losses_all, scores_all, counts_all, samples, steps, time.time()-beg)
+                print(f"\r[{100*(b+1)/len(data):3.0f}%]", end=" ")                
 
         if scores is not None:
             scores_all = scores_all.cpu()
-        return output_all.cpu(),  losses_all.cpu(), scores_all
+        return output_all.cpu(),  scores_all
 
     #---------------------------------------------------------------------------
 

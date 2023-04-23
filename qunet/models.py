@@ -98,27 +98,28 @@ class CNN(nn.Module):
     def __init__(self, cfg) -> None:
         super().__init__()
         self.cfg = {
-            'input'    : (1, 64, 64),   # входной тензор: (channels, height, width)
-            'channel'  : [16,32,64],    # число каналов в каждом слое
-            'kernel'   : [3,3,3],       # int or list: размеры конволюционного ядра
-            'stride'   : 1,             # int or list: шаг конволюционного ядра
-            'padding'  : 1,             # int or list: забивка вокруг картинки
-            'pool_ker' : 2,             # int or list: ядро max-пулинга
-            'pool_str' : 2,             # int or list: шаг max-пулинга
-            'drop'     : 0,             # int or list: dropout после каждого слоя
-            'output'   : None           # выходной тензор устанавливает create()
+            'input'    : (1, 64, 64),   # input tensor shape:: (channels, height, width)
+            'output'   : None,          # output tensor shape;  sets in create()
+            'channel'  : [16,32,64],    # number of channels in each layer
+            'kernel'   : [3,3,3],       # int or list: size of the convolutional kernel
+            'stride'   : 1,             # int or list: stride of the convolutional kernel
+            'padding'  : 1,             # int or list: padding around the image
+            'pool_ker' : 2,             # int or list: max-pooling kernel
+            'pool_str' : 2,             # int or list: stride of max-pooling kernel
+            'drop'     : 0,             # int or list: dropout после каждого слоя            
         }
         if type(cfg) is dict:           # добавляем, меняем свойства
             self.cfg.update(copy.deepcopy(cfg))
         cfg = self.cfg
 
         n = len(cfg['channel'])
-        if type(cfg['drop'])     == int: cfg['drop']     = [cfg['drop']]    * n
-        if type(cfg['kernel'])   == int: cfg['kernel']   = [cfg['kernel']]  * n
-        if type(cfg['stride'])   == int: cfg['stride']   = [cfg['stride']]  * n
-        if type(cfg['padding'])  == int: cfg['padding']  = [cfg['padding']] * n
-        if type(cfg['pool_ker']) == int: cfg['pool_ker'] = [cfg['pool_ker']]* n
-        if type(cfg['pool_str']) == int: cfg['pool_str'] = [cfg['pool_str']]* n
+        if type(cfg['drop'])     == int:   cfg['drop']     = [cfg['drop']]    * n
+        if type(cfg['kernel'])   == int:   cfg['kernel']   = [cfg['kernel']]  * n
+        if type(cfg['stride'])   == int:   cfg['stride']   = [cfg['stride']]  * n
+        if type(cfg['padding'])  == int:   cfg['padding']  = [cfg['padding']] * n
+        if type(cfg['pool_ker']) == int:   cfg['pool_ker'] = [cfg['pool_ker']]* n
+        if type(cfg['pool_str']) == int:   cfg['pool_str'] = [cfg['pool_str']]* n
+        if type(cfg['drop'])==float or type(cfg['drop'])==int: cfg['drop']=[cfg['drop']]*n
         
         self.create()
 

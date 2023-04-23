@@ -276,10 +276,13 @@ If `trainer.score_max=True`, then the higher the score, the better (for example,
 
 ## Examples
 
-* Regression_1D - visualization of changes in model parameters
-* Interpolation_F(x)
-* MNIST
+* <a href="https://colab.research.google.com/drive/179sHb3WyHNrSJKGLfKrXaAzvShmS1SSf?usp=sharing">Interpolation_F(x)</a> - interpolation of a function of one variable (example of setting up a training plot; working with the list of schedulers; adding a custom graph)
+* <a href="https://colab.research.google.com/drive/1N4b6mwUvH-o-t6VIiuhq7FMuGRabdOm0?usp=sharing">MNIST</a> - recognition of handwritten digits 0-9 (example using pytorch DataLoader, classification task)
+
+* CIFAR  (agumantation)
+
 * Vanishing gradient
+* Regression_1D - visualization of changes in model parameters
 
 <hr>
 
