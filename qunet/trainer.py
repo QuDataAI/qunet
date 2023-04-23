@@ -1,4 +1,4 @@
-﻿import os, math, copy, time, datetime
+﻿import os, math, copy, time, datetime, pathlib
 from   tqdm.auto import tqdm
 import numpy as np, matplotlib.pyplot as plt
 import torch, torch.nn as nn
@@ -153,17 +153,58 @@ class Trainer:
 
     #---------------------------------------------------------------------------
 
-    def to_device(self, X):
-        if type(X) is list or type(X) is tuple:
-            for i in range(len(X)):
-                X[i] = X[i].to(self.device)
-        else:
-            X = X.to(self.device)
-        return X
+    def to_device(self, batch):
+        """ send mini-batch to device """        
+        if torch.is_tensor(batch):
+            return batch.to(self.device)
+        batch = list(batch)        
+        for i in range(len(batch)):
+            batch[i] = self.to_device(batch[i])
+        return batch
 
     #---------------------------------------------------------------------------
 
-    def fit(self, epoch, model, data,  train=True, accumulate=1, verbose=1):
+    def get_fun_step(self, model, train):
+        """ Получить функцию шага тренировки или dfkblfwbb """
+        fun_step = None
+        if train: 
+            if hasattr(model, "training_step"):            
+                fun_step = model.training_step
+        else:
+            if hasattr(model, "validation_step"):            
+                fun_step = model.validation_step
+            elif hasattr(model, "training_step"):            
+                fun_step = model.training_step
+
+        assert fun_step is not None, "model must has training_step function"
+        return fun_step
+
+    #---------------------------------------------------------------------------
+
+    def get_metrics(self, step):
+        """ из результатов шага обучения вделить ишибку и метрику"""
+        if torch.is_tensor(step):
+            loss   = step
+            scores = None
+        elif type(step) is dict:
+            loss  = step.get('loss')
+            scores = step.get('score')
+        if torch.is_tensor(scores) and scores.ndim == 1:
+            scores = scores.view(-1,1)
+        return loss, scores
+
+    #---------------------------------------------------------------------------
+
+    def samples_in_batch(self, batch):
+        """ сколько примров в батче """
+        if torch.is_tensor(batch):
+            return len(batch)
+        if type(batch) is list or type(batch) is tuple:
+            return self.samples_in_batch(batch[0]) 
+        assert False, "wrong type of the fist element in batch"
+    #---------------------------------------------------------------------------
+
+    def fit_epoch(self, epoch, model, data,  train=True, accumulate=1, verbose=1):
         """
         Args:
             * train      - True: режим тренировки, иначе валидации
@@ -180,27 +221,28 @@ class Trainer:
 
         if train:
             self.optim.zero_grad()                  # обнуляем градиенты
+        
+        fun_step = self.get_fun_step(model, train)  # функция шага тренировки или валидации           
 
         samples, steps, beg, lst = 0, 0, time.time(), time.time()
         counts_all, losses_all,  scores_all = torch.empty(0,1), None,  None
-        for b, (x, y_true) in enumerate(data):
-            num = len(x[0]) if type(x) is list or type(x) is tuple else len(x)
-            x, y_true = self.to_device(x), self.to_device(y_true)
+        for batch_id, batch in enumerate(data):    
+            num   = self.samples_in_batch(batch)
+            batch = self.to_device(batch)            
 
             if scaler is None:
-                y_pred = model(x)
-                loss, scores = model.metrics(x, y_pred, y_true)
+                step = fun_step(batch, batch_id)                
             else:
                 with torch.autocast(device_type=self.device, dtype=self.dtype):
-                    y_pred = model(x)
-                    loss, scores = model.metrics(x, y_pred, y_true)
-
+                    step = fun_step(batch, batch_id)
+            loss, scores = self.get_metrics(step)
+                
             if train:
                 if scaler is None:
                     loss.backward()   # вычисляем градиенты
                 else:
                     scaler.scale(loss).backward()   # вычисляем градиенты
-                if (b+1) % accumulate == 0:
+                if (batch_id+1) % accumulate == 0:
                     if scaler is None:
                         self.optim.step()
                     else:
@@ -215,14 +257,14 @@ class Trainer:
             losses_all = loss.detach() if losses_all is None else torch.vstack([losses_all, loss.detach()])
             if scores is not None:
                 scores = scores.detach()
-                assert scores.dim() == 2, f"model must has tensor score in function metrics with dim==2, but got {scores.dim()}"
+                assert scores.ndim == 2, f"model must has tensor score in function metrics with dim==2, but got {scores.ndim}"
                 scores = scores.mean(dim=0)
                 scores_all = scores if scores_all is None else torch.vstack([scores_all, scores])
             counts_all = torch.vstack([counts_all, torch.Tensor([num])])
 
-            if verbose and (time.time()-lst > 1 or b+1 == len(data) ):
+            if verbose and (time.time()-lst > 1 or batch_id+1 == len(data) ):
                 lst = time.time()
-                self.fit_progress(epoch, train, (b+1)/len(data),
+                self.fit_progress(epoch, train, (batch_id+1)/len(data),
                                   losses_all, scores_all, counts_all, samples, steps, time.time()-beg)
 
         if train: self.hist['time_trn'] += (time.time()-beg)
@@ -230,7 +272,9 @@ class Trainer:
 
         if scores_all is not None:
             scores_all = scores_all.cpu()
-        return losses_all.cpu(), scores_all, counts_all, (samples, steps, time.time()-beg)
+        if losses_all is not None:
+            losses_all = losses_all.cpu()
+        return losses_all, scores_all, counts_all, (samples, steps, time.time()-beg)
 
     #---------------------------------------------------------------------------
 
@@ -282,42 +326,36 @@ class Trainer:
         torch.set_grad_enabled(False)    # вычислительный граф не строим
         data.whole = whole               # обычно по всем примерам (и по дробному батчу)
 
-        samples, beg, lst = 0, time.time(), time.time()
-        scores_all, output_all = None, None
+        assert hasattr(model, "predict_step"), "for method predict model must has method predict_step, witch return output tensor"
 
         scaler = None
         if torch.cuda.is_available() and self.dtype != torch.float32:
             scaler = torch.cuda.amp.GradScaler()
-        for b, (x, y_true) in enumerate(data):
-            num = len(x[0]) if type(x) is list or type(x) is tuple else len(x)
-            x, y_true = self.to_device(x), self.to_device(y_true)
+
+        samples, beg, lst = 0, time.time(), time.time()
+        output_all = None        
+        for batch_id, batch in enumerate(data):
+            num   = self.samples_in_batch(batch)
+            batch = self.to_device(batch)            
 
             if scaler is None:
-                y_pred = model(x)
-                _, scores = model.metrics(x, y_pred, y_true)
+                y_pred = model.predict_step(batch, batch_id)                                
             else:
                 with torch.autocast(device_type=self.device, dtype=self.dtype):
-                    y_pred = model(x)
-                    _, scores = model.metrics(x, y_pred, y_true)
+                    y_pred = model.predict_step(batch, batch_id)                    
             
             samples += num                      # число просмотренных примеров за эпоху            
-            if scores is not None:
-                scores = scores.detach()
-                assert scores.dim() == 2, f"model must has tensor score in function metrics with dim==2, but got {scores.dim()}"
-                scores_all = scores if scores_all is None else torch.vstack([scores_all, scores])            
             output_all = y_pred.detach() if output_all is None else torch.vstack([output_all, y_pred.detach() ])            
 
-            if verbose and (time.time()-lst > 1 or b+1 == len(data) ):
+            if verbose and (time.time()-lst > 1 or batch_id+1 == len(data) ):
                 lst = time.time()
-                print(f"\r[{100*(b+1)/len(data):3.0f}%]", end=" ")                
+                print(f"\r[{100*(batch_id+1)/len(data):3.0f}%]  {(time.time()-beg)/60:.2f}m", end=" ")                
 
-        if scores is not None:
-            scores_all = scores_all.cpu()
-        return output_all.cpu(),  scores_all
+        return output_all.cpu()
 
     #---------------------------------------------------------------------------
 
-    def run(self,  epochs =None,  samples=None,            
+    def fit(self,  epochs =None,  samples=None,            
             pre_val:bool=False, period_val:int=1, period_plot:int=100,         
             period_checks:int=1, period_val_beg:int = 4, samples_beg:int = None,
             period_call:int = 0, callback = None): 
@@ -338,7 +376,7 @@ class Trainer:
         self.set_optim_schedulers()        
         self.model.to(self.device)
         if pre_val:
-            losses, scores, counts, (samples_val, steps_val, tm_val) = self.fit(0, self.model, self.data_val, train=False)
+            losses, scores, counts, (samples_val, steps_val, tm_val) = self.fit_epoch(0, self.model, self.data_val, train=False)
             loss_val, score_val = self.mean(losses, scores, counts)
             self.add_hist(self.hist['val'], self.data_val.batch_size, samples_val, steps_val, tm_val, loss_val, score_val, self.scheduler.get_lr())
             print()
@@ -346,7 +384,7 @@ class Trainer:
         epochs = epochs or 1_000_000
         #for epoch in tqdm(range(1, epochs+1)):
         for epoch in range(1, epochs+1):
-            losses, scores, counts, (samples_trn,steps_trn,tm_trn) = self.fit(epoch, self.model, self.data_trn, train=True)
+            losses, scores, counts, (samples_trn,steps_trn,tm_trn) = self.fit_epoch(epoch, self.model, self.data_trn, train=True)
             loss_trn, score_trn = self.mean(losses, scores, counts)
             lr = self.scheduler.get_lr()
             self.add_hist(self.hist['trn'], self.data_trn.batch_size, samples_trn, steps_trn, tm_trn, loss_trn, score_trn, lr)
@@ -363,7 +401,7 @@ class Trainer:
 
             period = period_val_beg if samples_beg and  self.hist['samples'] < samples_beg else period_val
             if  (period and epoch % period == 0) or epoch == epochs:
-                losses, scores, counts, (samples_val,steps_val,tm_val) = self.fit(epoch, self.model, self.data_val, train=False)
+                losses, scores, counts, (samples_val,steps_val,tm_val) = self.fit_epoch(epoch, self.model, self.data_val, train=False)
                 loss_val, score_val = self.mean(losses, scores, counts)
                 self.add_hist(self.hist['val'], self.data_val.batch_size, samples_val, steps_val, tm_val, loss_val, score_val, lr)
 
@@ -372,8 +410,8 @@ class Trainer:
                     self.hist['best']['loss_val'] = loss_val
                     self.hist['best']['samples_loss_val'] = self.hist['samples']
                     self.hist['val']['best_loss'].append((self.hist['samples'], self.hist['steps'], loss_val))
-                    if self.folder_loss:
-                        self.save(self.model, folder=self.folder_loss, prefix=f"loss_{loss_val:.4f}_{self.now()}")
+                    if self.folder_loss is not None:
+                        self.save(folder=self.folder_loss, fname=f"loss_{loss_val:.4f}_{self.now()}.pt", model=self.model, optim=self.optim)
                     if self.copy_best_loss_model:
                         self.best_loss_model  = copy.deepcopy(self.model)
                 
@@ -381,8 +419,8 @@ class Trainer:
                     self.hist['best']['score_val'] = score_val[0]
                     self.hist['best']['samples_score_val'] = self.hist['samples']
                     self.hist['val']['best_score'].append( (self.hist['samples'], self.hist['steps'], score_val[0].item()) )
-                    if self.folder_score:
-                        self.save(self.model, folder=self.folder_score, prefix=f"score_{score_val[0]:.4f}_{self.now()}")
+                    if self.folder_score is not None:                        
+                        self.save(folder=self.folder_score, fname=f"score_{score_val[0]:.4f}_{self.now()}.pt", model=self.model, optim=self.optim)
                     if self.copy_best_score_model:
                         self.best_score_model  = copy.deepcopy(self.model)
 
@@ -394,7 +432,9 @@ class Trainer:
                 callback()
 
             if self.folder_checks and (epoch % period_checks == 0 or epoch == epochs):
-                self.save(self.model, folder=self.folder_checks, prefix="check_"+self.now())
+                score_val = score_val or [0]
+                score_trn = score_trn or [0]
+                self.save(folder=self.folder_checks, fname=f"checks_{self.now()}_score_val_{score_val[0]:.4f}_trn_{score_trn[0]:.4f}_loss_val_{loss_val}_trn_{loss_trn}.pt", model=self.model, optim=self.optim)                
 
             self.step_schedulers(samples_trn)
 
@@ -422,7 +462,7 @@ class Trainer:
     #---------------------------------------------------------------------------
 
     def now(self):
-        return datetime.datetime.now().strftime("%m-%d %H:%M:%S")
+        return datetime.datetime.now().strftime("%m.%d_%H-%M-%S")
 
     #---------------------------------------------------------------------------
 
@@ -440,9 +480,11 @@ class Trainer:
 
     #---------------------------------------------------------------------------
 
-    def save(self, fname, model = None, optim=None, info=""):
+    def save(self, folder, fname, model = None, optim=None, info=""):
         model = model or self.model
         cfg = model.cfg
+        fname = pathlib.Path(folder)  / pathlib.Path(fname)
+        fname.parent.mkdir(parents=True, exist_ok=True)
         state = {
             'info':            info,
             'date':            datetime.datetime.now(),   # дата и время

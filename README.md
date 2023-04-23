@@ -35,41 +35,45 @@ trainer.set_optimizer( torch.optim.SGD(model.parameters(), lr=1e-2) )
 trainer.set_scheduler( ExpScheduler(lr1=1e-5, lr2=1e-4, samples=100e3) )
 
 # 3. run training
-trainer.run(epochs=100, period_plot=5)
+trainer.fit(epochs=100, period_plot=5)
 ```
 
 <hr>
 
 ## Model
 
-Model must be a class (successor of nn.Module) with methods:
-* The `forward` function takes input `x` and returns output `y`.
-These can be tensors or tuples (lists) of tensors.
-* The `metrics` function takes  `(x, y_true, y_pred)` and returns the model's scalar loss and tensor quality metric: 
- `(B,1)` for one metric (accuracy, for example) or `(B,n)` for n quality metrics.
+Model must be a class (successor of nn.Module) with functions:
+
+* `forward(x)` function takes input `x` and returns output `y`. 
+This function is not used directly by the coach and usually contains a description of the model.
+* `training_step(batch, batch_id)` - called by the trainer during the training phase. 
+Should return a scalar loss (with computational graph).
+It can also return a dictionary like `{"loss": scalar, "score": tensor}`, where score is a quality metric.
+* `validation_step(batch, batch_id)` - similarly called at the model validation stage.
+If it does the same calculations as `training_step`, it can be omitted.
 
 For example, for 1D linear regression  $y=f(x)$ with mse-loss and metric as |y_pred-y_true|, model looks like:
 ```python
 class Model(nn.Module):
-    def __init__(self):        
+    def __init__(self):      
+        """ Creating Model Parameters """  
         super().__init__() 
         self.fc = nn.Linear( 1, 1 )
 
     def forward(self, x):                            # (B,1)
+        """ Defining Model Calculations """
         return self.fc(x)                            # (B,1)
 
-    def metrics(self, x, y_pred, y_true)             # (B,1) (B,1)  (B,1)        
-        loss   = (y_pred - y_true).pow(2).mean()     # ()     scalar!
-        errors = torch.abs(y_pred.detach()-y_true)   # (B,1)  one metric
-        return loss, errors                          # ()  (B,1)
+    def training_step(self, batch, batch_id):
+        """ Called by the trainer during the training step """
+        x, y_pred = batch                            # the model knows the minbatch format
+        y_true = self(x)                             # (B,1)  forward function call
+        loss   = (y_pred - y_true).pow(2).mean()     # ()     loss for optimization (scalar)!        
+        errors = torch.abs(y_pred.detach()-y_true)   # (B,1)  errors for each sample (one metric)
+        return {'loss':loss, 'score': errors}        # if there is no score, you can simply return loss
 ```
+As we can see, the model description interface is the same as the library interface <a href="https://lightning.ai/">Pytorch Lightning</a>
 
-**Attention**: If the output of the model is one, after the Linear layer the tensor has the shape (B,1).
-Therefore, the target data must also have the form (B,1), otherwise we will get an incorrect loss.
-```python
-X,Y = torch.arange(5).view(-1,1).to(torch.float32),  torch.arange(5).to(torch.float32)
-loss = (X-Y).pow(2).mean()  # 4 так как (B,1) - (B,) = (B,1) - (1,B) = (B,B)
-```
 <hr>
 
 ## Data
@@ -114,8 +118,8 @@ from torchvision            import datasets
 from torchvision.transforms import ToTensor 
 from torch.utils.data       import DataLoader
 
-mnist = datasets.MNIST(root='data', train=True,  transform=ToTensor(), download=True)
-data_trn  = DataLoader(dataset=mnist, batch_size=1024, shuffle=True)
+mnist    = datasets.MNIST(root='data', train=True,  transform=ToTensor(), download=True)
+data_trn = DataLoader(dataset=mnist, batch_size=1024, shuffle=True)
 ```
 <hr>
 
@@ -123,11 +127,11 @@ data_trn  = DataLoader(dataset=mnist, batch_size=1024, shuffle=True)
 
 The Trainer is given the model, training and validation data.
 Using the `set_optimizer` function, the optimizer is set.
-After that, the function `run` is called:
+After that, the function `fit` is called:
 ```python
 trainer = Trainer(model, data_trn, data_val)
 trainer.set_optimizer( torch.optim.SGD(model.parameters(), lr=1e-2) )
-trainer.run(epochs=100, pre_val=True, period_plot=10)
+trainer.fit(epochs=100, pre_val=True, period_plot=10)
 ```
 You can add different training schedulers, customize the output of training graphs, manage the storage of the best models and checkpoints, and much more.
 
@@ -144,7 +148,7 @@ Other properties of `Trainer` allow you to customize the appearance of graphs, s
 They will be discussed in the relevant sections.
 
 ```python
-trainer.run(epochs =None,  samples=None,            
+trainer.fit(epochs =None,  samples=None,            
             pre_val=False, period_val=1, period_plot=100,         
             period_checks=1, period_val_beg = 4, samples_beg = None,
             period_call:int = 0, callback = None):     
@@ -251,7 +255,7 @@ These models can be used to roll back if something went wrong (similarly for `tr
 train.model = copy.deepcopy(trainer.best_score_model)   
 ```
 
-If the following folder is defined (by default `None`), then the best model by validation loss, score will be saved on disk and intermediate versions of the model will be saved with the period `period_checks` (argument of `run` function).
+If the following folder is defined (by default `None`), then the best model by validation loss, score will be saved on disk and intermediate versions of the model will be saved with the period `period_checks` (argument of `fit` function).
 ```python
 trainer.folder_loss   = "models/best_loss"   # folder to save the best val loss models
 trainer.folder_score  = "models/best_score"  # folder to save the best val score models
