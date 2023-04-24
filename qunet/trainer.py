@@ -40,6 +40,10 @@ class Trainer:
         self.folder_score  = None        # folder to save the best val score models
         self.folder_checks = None        # folder to save checkpoints        
 
+        self.transform_trn = None
+        self.transform_val = None
+        self.transform_tst = None
+
         # -------------------------------- настройки для построения графиков ошибок и метрик
         self.view = {                    
             'w'            : 12,         # plt-plot width
@@ -151,6 +155,9 @@ class Trainer:
                 self.scheduler = sch
                 break
 
+    def plot_schedulers(self):
+        self.scheduler.plot_list(self.schedulers)
+
     #---------------------------------------------------------------------------
 
     def to_device(self, batch):
@@ -223,11 +230,16 @@ class Trainer:
             self.optim.zero_grad()                  # обнуляем градиенты
         
         fun_step = self.get_fun_step(model, train)  # функция шага тренировки или валидации           
+        transform = self.transform_trn if train else self.transform_val
 
         samples, steps, beg, lst = 0, 0, time.time(), time.time()
         counts_all, losses_all,  scores_all = torch.empty(0,1), None,  None
         for batch_id, batch in enumerate(data):    
             num   = self.samples_in_batch(batch)
+
+            if transform is not None:
+                batch = transform(batch, batch_id)
+            
             batch = self.to_device(batch)            
 
             if scaler is None:
@@ -336,6 +348,10 @@ class Trainer:
         output_all = None        
         for batch_id, batch in enumerate(data):
             num   = self.samples_in_batch(batch)
+
+            if self.transform_tst is not None:
+                batch = self.transform_tst(batch, batch_id)
+
             batch = self.to_device(batch)            
 
             if scaler is None:
