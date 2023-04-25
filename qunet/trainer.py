@@ -425,7 +425,7 @@ class Trainer:
 
     def fit(self,  epochs =None,  samples=None,            
             pre_val:bool=False, period_val:int=1, period_plot:int=100,         
-            period_points:int=1, period_val_beg:int = 4, samples_beg:int = None,
+            period_points:int=1, period_val_beg=1, samples_beg:int = None,
             period_call:int = 0, 
             monitor = [],
             patience = None,
@@ -439,11 +439,12 @@ class Trainer:
             * period_plot          - period after which the training plot is displayed (in epochs)
             * period_call          - callback custom function call period
             * callback             - custom function called with period_info
-            * period_points        - period after which checkpoints are made and the current model is saved (in epochs)
-            * period_val_beg = 4   - validation period on the first samples_beg examples
+            * period_val_beg        - validation period on the first samples_beg examples
+            * samples_beg           - the number of samples from the start, after which the validation period will be equal to period_val.
+            * period_points         - period after which checkpoints are made and the current model is saved (in epochs)            
             * monitor=[]           - what to save in folders: monitor=['loss'] or monitor=['loss', 'score', 'points']
             * patience             - after how many epochs to stop if there was no better loss, but a better score during this time 
-            * samples_beg = None   - the number of samples from the start, after which the validation period will be equal to period_val.
+            
         """
         assert self.optim is not None, "Define the optimizer first"
         self.set_optim_schedulers()        

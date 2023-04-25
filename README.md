@@ -8,7 +8,7 @@ Easy working with deep learning models.
 * Large set of custom modules for neural networks (MLP, CNN, Transformer, etc.)
 * Trainer class for training the model.
 * Various tools for visualizing the training process and the state of the model.
-* Training large models: float16, mini-batch splitting if it does not fit in memory, etc.
+* Training large models: float16, mini-batch splitting, etc.
 
 <hr>
 
@@ -24,7 +24,7 @@ pip install qunet
 ```python
 from qunet import Data, Trainer, Scheduler_Exp
                                              
-trainer = Trainer(model, data_trn, data_val)    
+trainer = Trainer(model, data_trn, data_val)
 
 trainer.set_optimizer( torch.optim.SGD(model.parameters(), lr=1e-2) )
 trainer.set_scheduler( Scheduler_Exp(lr1=1e-5, lr2=1e-4, samples=100e3) )
@@ -55,15 +55,15 @@ class Model(nn.Module):
         super().__init__() 
         self.fc = nn.Linear( 1, 1 )
 
-    def forward(self, x):                                 # (B,1)        
+    def forward(self, x):                                 # (B,1)
         return self.fc(x)                                 # (B,1)
 
     def training_step(self, batch, batch_id):        
         x, y_true = batch                                 # the model knows the minbatch format
         y_pred = self(x)                                  # (B,1)  forward function call
-        loss  = (y_pred - y_true).pow(2).mean()           # ()     loss for optimization (scalar)!        
-        error = torch.abs(y_pred.detach()-y_true).mean()  # (B,1)  error for batch samples (one metric)
-        return {'loss':loss, 'score': error}              # if there is no score, you can simply return loss
+        loss  = (y_pred - y_true).pow(2).mean()           # ()     loss for optimization (scalar)!
+        error = torch.abs(y_pred.detach()-y_true).mean()  # (B,1)  error for batch samples
+        return {'loss':loss, 'score': error}              # if no score, you can return loss
 ```
 As we can see, the model description interface is the same as the library interface <a href="https://lightning.ai/">PyTorch Lightning</a>
 
@@ -71,7 +71,7 @@ As we can see, the model description interface is the same as the library interf
 
 ## Data
 
-QuNet has a Data class - data for training or validation  model. It can be overridden or pytorch DataLoader can be used.
+QuNet has a Data class - data for model training or validation. It can be overridden or pytorch DataLoader can be used.
 The iterator `__next__`  is supposed  must return an mini-batch, has the same structure as passed `dataset` when creating the `Data`.
 For example, let's create training data in which two tensors X1,X2 are the input of the model and one tensor Y is the output (target):
 ```python    
@@ -83,7 +83,7 @@ Y = X1 * torch.sigmoid(X2).mean(-1)
 data_trn = Data( dataset=( (X1,X2), Y ), batch_size=100)  
  
 for (x1,x2), y in data_trn:
-    print(x1.shape, x2.shape, y.shape)
+    print(x1.shape, x2.shape, y.shape)  # (100,3) (100,3,20) (100,3)
 ```        
 All tensors in the dataset are assumed to have the same length (by first index).
 The model is responsible for interpreting the composition of the mini-batch.
@@ -120,10 +120,10 @@ trainer = Trainer(model, data_trn, data_val)
 trainer.set_optimizer( torch.optim.SGD(model.parameters(), lr=1e-2) )
 trainer.fit(epochs=100, pre_val=True, period_plot=10)
 ```
-You can add different training schedulers, customize the output of training graphs, manage the storage of the best models and checkpoints, and much more.
+You can add different training schedulers, customize the output of training graphs, manage the storage of the best models and checkpoints, and much more. The Trainer class constructor has the following parameters:
 
 ```python
-trainer = Trainer(model, data_trn, data_val, device=None, dtype=torch.float32, score_max=False)
+trainer = Trainer(model, data_trn, data_val, score_max=False)
 ```
 
 * `model`     - model for traininig;
@@ -132,13 +132,14 @@ trainer = Trainer(model, data_trn, data_val, device=None, dtype=torch.float32, s
 * `score_max` - consider that the metric (the first column of the tensor `score` returned by the function `training_step` of the model); should strive to become the maximum (for example, so for accuracy).
 
 Other properties of `Trainer` allow you to customize the appearance of graphs, save models, manage training, and so on.
-They will be discussed in the relevant sections.
+They will be discussed in the relevant sections. Model training starts after running the `fit` function:
 
 ```python
 trainer.fit(epochs=None,   samples=None,            
             pre_val=False, period_val=1, period_plot=100,         
             period_checks=1, period_val_beg = 4, samples_beg = None,
-            period_call:int = 0, callback = None):     
+            monitor=[], patience=None,
+            period_call:, callback = None):     
 ```
 
 * `epochs`         - number of epochs for training (passes of one data_trn pack). If not defined (None) works "infinitely".
@@ -146,9 +147,9 @@ trainer.fit(epochs=None,   samples=None,
 * `pre_val`        - validate model before starting training
 * `period_val`     - the period with which the validation model runs (in epochs)
 * `period_plot`    - the period with which the training plot is displayed  (in epochs)
-* `period_call`    - callback custom function call period
-* `callback`       - custom function called with period_info
-* `period_checks`  - the period with which the checkpoints are made and the current model is saved (in epochs)
+* `period_call`    - callback custom function
+* `callback`       - custom function called with `period_call`
+* `period_points`  - the period with which the checkpoints are made and the current model is saved (in epochs)
 * `period_val_beg` - the period with which the validation model runs on the first `samples_beg` samples. Used when validation needs to be done less frequently at the start of training.
 * `samples_beg`   -  the number of samples from the start, after which the validation period will be equal to `period_val`
 * `monitor=[]`- what to save in folders: monitor=['loss'] or monitor=['loss', 'score', 'checks']
@@ -158,7 +159,7 @@ trainer.fit(epochs=None,   samples=None,
 
 ## Visualization of the training process
 
-If, when calling `fit`, its argument is `period_plot > 0`, then every `period_plot` a training plot will be displayed.
+When `fit` has argument `period_plot > 0`, then every `period_plot` a training plot will be displayed.
 By default it contains score and loss:
 
 <img src="img/loss.png">
@@ -242,15 +243,21 @@ This group of methods works with all schedulers:
 * `stop_schedulers` () - stop all schedulers
 * `clear_schedulers`() - clear list of schedulers
 
-Example:
+Example of learning curves of various schedulers:
 
 <img src="img/schedulers.png">
+
+An example of using schedulers can be found in:
+<a href="https://colab.research.google.com/drive/179sHb3WyHNrSJKGLfKrXaAzvShmS1SSf?usp=sharing">notebook Interpolation_F(x)</a> 
+
 <hr>
+
 
 ## Best Model and Checkpoints
 
 Trainer can store the best models in memory or on disk.
-Smaller models are convenient to keep in memory when a better validation loss or metric (the first one in the score list) is reached. 
+Small models are convenient to keep in memory. 
+When the best validation loss or score is reached, a copy of the model is made. 
 To do this, you need to enable `train.best.copy` and specify the target value for which you want to remember the model in the `monitor` list:
 ```
 trainer.best.copy = True
@@ -264,7 +271,7 @@ trainer.model = copy.deepcopy(trainer.best.score_model)
 ```
 To save the best models by loss and/or score on disk, you need to set folders:
 ```python
-trainer.folders(loss='log/loss', score='log/loss',  points='log/checkpoints',)
+trainer.folders(loss='log/loss', score='log/loss',  points='log/checkpoints')
 ```
 Saving will occur if you specify `monitor=['score', 'loss', 'points']` in `fit`
 
@@ -327,10 +334,3 @@ An example of such an argumentation can be found in the <a href="https://colab.r
 $$
 E=mc^2
 $$
-
-```
-monitor=['score', 'loss]
-pacience
-folder
-train.transforms
-```
