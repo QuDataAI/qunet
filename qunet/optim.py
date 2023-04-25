@@ -23,9 +23,6 @@ class Scheduler:
         assert samples is None or samples > 1,  f"Wrong samples={samples} limits in Scheduler"        
         assert epochs  is None or epochs  > 1,  f"Wrong epochs ={epochs}  limits in Scheduler"        
 
-        if lr1 is None:
-            lr1 = self.get_lr()
-
         self.lr1     = lr1
         self.lr2     = lr2    
         self.epochs  = epochs
@@ -41,7 +38,7 @@ class Scheduler:
     #---------------------------------------------------------------------------
 
     def set_lr(self, lr):
-        if self.optim is not None:
+        if self.optim is not None and lr is not None:
             for g in self.optim.param_groups:
                 g['lr'] = lr
 

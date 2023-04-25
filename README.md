@@ -61,17 +61,17 @@ class Model(nn.Module):
         super().__init__() 
         self.fc = nn.Linear( 1, 1 )
 
-    def forward(self, x):                            # (B,1)
+    def forward(self, x):                                 # (B,1)
         """ Defining Model Calculations """
-        return self.fc(x)                            # (B,1)
+        return self.fc(x)                                 # (B,1)
 
     def training_step(self, batch, batch_id):
         """ Called by the trainer during the training step """
-        x, y_true = batch                            # the model knows the minbatch format
-        y_pred = self(x)                             # (B,1)  forward function call
-        loss   = (y_pred - y_true).pow(2).mean()     # ()     loss for optimization (scalar)!        
-        errors = torch.abs(y_pred.detach()-y_true)   # (B,1)  errors for each sample (one metric)
-        return {'loss':loss, 'score': errors}        # if there is no score, you can simply return loss
+        x, y_true = batch                                 # the model knows the minbatch format
+        y_pred = self(x)                                  # (B,1)  forward function call
+        loss  = (y_pred - y_true).pow(2).mean()           # ()     loss for optimization (scalar)!        
+        error = torch.abs(y_pred.detach()-y_true).mean()  # (B,1)  error for batch samples (one metric)
+        return {'loss':loss, 'score': error}              # if there is no score, you can simply return loss
 ```
 As we can see, the model description interface is the same as the library interface <a href="https://lightning.ai/">Pytorch Lightning</a>
 

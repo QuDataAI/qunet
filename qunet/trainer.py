@@ -32,11 +32,12 @@ class Trainer:
         self.schedulers = []             # список шедулеров для управления обучением
         self.scheduler  = Scheduler()    # текущий шедулер
 
-        self.best_models = Config(
-            score = None,                # copy of the best model by val score
-            loss  = None,                # copy of the best model by val loss
-            copy_score=False,            # to copy the best model by val score
-            copy_loss =False             # to copy the best model by val loss
+        self.best = Config(
+            score = None,               # best val score
+            loss = None,                # best val loss
+            score_model = None,         # copy of the best model by val score
+            loss_model  = None,         # copy of the best model by val loss
+            copy = False                 # should copy loss or score model if is in monitor
         )
          
         self.folders = Config(
@@ -156,7 +157,9 @@ class Trainer:
 
     def set_scheduler(self, scheduler):
         self.schedulers = []
-        self.add_scheduler(scheduler)
+        self.add_scheduler(scheduler)        
+        if scheduler.lr1 is not None:
+            scheduler.set_lr(scheduler.lr1)        
 
     def add_scheduler(self, scheduler):
         scheduler.optim = self.optim
@@ -182,6 +185,8 @@ class Trainer:
         for sch in self.schedulers:
             if sch.enable:
                 sch.step(epochs, samples)
+                if not sch.enable:
+                    self.add_label("")
                 self.scheduler = sch
                 break
 
@@ -257,6 +262,7 @@ class Trainer:
             scaler = torch.cuda.amp.GradScaler()
 
         if train:                                   # в режиме обучения
+            self.hist.epochs  += 1                  # эпох за всё время (а если packs > 1 ?)
             self.optim.zero_grad()                  # обнуляем градиенты
         
         fun_step = self.get_fun_step(model, train)  # функция шага тренировки или валидации           
@@ -293,8 +299,7 @@ class Trainer:
                     self.optim.zero_grad()          # обнуляем градиенты
                     steps      += 1                 # шагов за эпоху
                     self.hist.steps += 1            # шагов за всё время
-                self.hist.samples += num            # примеров за всё время
-                self.hist.epochs  += 1              # эпох за всё время
+                self.hist.samples += num            # примеров за всё время                
 
             samples += num                          # просмотренных примеров за эпоху
             losses_all = loss.detach() if losses_all is None else torch.vstack([losses_all, loss.detach()])
@@ -451,6 +456,7 @@ class Trainer:
             print()
 
         epochs = epochs or 1_000_000_000
+        last_best = 0
         #for epoch in tqdm(range(1, epochs+1)):
         for epoch in range(1, epochs+1):
             losses, scores, counts, (samples_trn,steps_trn,tm_trn) = self.fit_epoch(epoch, self.model, self.data_trn, train=True)
@@ -459,12 +465,14 @@ class Trainer:
             self.add_hist(self.hist.trn, self.data_trn.batch_size, samples_trn, steps_trn, tm_trn, loss_trn, score_trn, lr)
 
             if self.hist.trn.best.loss is None or self.hist.trn.best.loss > loss_trn:
+                last_best = epoch
                 self.hist.trn.best.loss = loss_trn
                 self.hist.trn.best.loss_epochs  = self.hist.epochs
                 self.hist.trn.best.loss_samples = self.hist.samples                
                 self.hist.trn.best.losses.append( (loss_trn, self.hist.epochs, self.hist.samples, self.hist.steps) )
 
             if self.best_score(self.hist.trn.best.score, score_trn):            
+                last_best = epoch
                 self.hist.trn.best.score = score_trn[0]
                 self.hist.trn.best.score_epochs  = self.hist.epochs
                 self.hist.trn.best.score_samples = self.hist.samples                
@@ -478,24 +486,25 @@ class Trainer:
 
                 # save best validation loss:
                 if self.hist.val.best.loss is None or self.hist.val.best.loss > loss_val:
-                    self.hist.val.best.loss = loss_val
+                    last_best = epoch
+                    self.hist.val.best.loss =  self.best.loss = loss_val
                     self.hist.val.best.loss_epochs  = self.hist.epochs
                     self.hist.val.best.loss_samples = self.hist.samples                    
                     self.hist.val.best.losses.append((loss_val, self.hist.epochs, self.hist.samples, self.hist.steps))
                     if self.folders.loss and 'loss' in monitor:
                         self.save(folder=self.folders.loss, fname=f"loss_{loss_val:.4f}_{self.now()}.pt", model=self.model, optim=self.optim)
-                    if self.best_models.copy_loss:
-                        self.best_models.loss  = copy.deepcopy(self.model)
+                    if self.best.copy and 'loss' in monitor:
+                        self.best.loss_models  = copy.deepcopy(self.model)
                 
                 if self.best_score(self.hist.val.best.score, score_val):
-                    self.hist.val.best.score = score_val[0]
+                    self.hist.val.best.score = self.best.score = score_val[0]
                     self.hist.val.best.score_epochs  = self.hist.epochs
                     self.hist.val.best.score_samples = self.hist.samples                    
                     self.hist.val.best.scores.append( ( score_val[0].item(), self.hist.epochs, self.hist.samples, self.hist.steps) )
                     if self.folders.score and 'score' in monitor:                        
-                        self.save(folder=self.folder_score, fname=f"score_{score_val[0]:.4f}_{self.now()}.pt", model=self.model, optim=self.optim)
-                    if self.best_models.copy_score and 'score' in monitor:
-                        self.best_models.score  = copy.deepcopy(self.model)
+                        self.save(folder=self.folders.score, fname=f"score_{score_val[0]:.4f}_{self.now()}.pt", model=self.model, optim=self.optim)
+                    if self.best.copy and 'score' in monitor:
+                        self.best.score_model  = copy.deepcopy(self.model)
 
             if (period_plot and epoch % period_plot == 0) or epoch == epochs:
                 self.run_progress()        
@@ -519,6 +528,10 @@ class Trainer:
                     if callback:
                         callback()
                     break
+
+            if patience is not None and patience > 0 and  epoch - last_best > patience:
+                print(f"Stop on patience={patience}. Epoch:{epoch}, last best epoch score:{self.hist.val.best.score_epochs}, loss:{self.hist.val.best.loss_epochs}")
+                break
 
     #---------------------------------------------------------------------------
 

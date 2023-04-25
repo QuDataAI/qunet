@@ -101,7 +101,7 @@ def subplot_history(sub, val, trn, view, x_min, x_max, c_unit, c_unit_power, uni
         y_min,y_max = ax1.get_ylim()
         for lb in labels:  
             x = lb[2]/c_unit if unit=='sample' else lb[1]               
-            ax1.vlines(x, y_min,y_max, linestyles=':', color='gray')
+            ax1.vlines(x, y_min,y_max, linestyles=':', color='gray', linewidths=1.5 if len(lb[0]) else 1)
             ax1.text  (x, y_min+(y_max-y_min)*0.01,    lb[0])
 
     checks = trn.best.losses if kind=='loss' else trn.best.scores

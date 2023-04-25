@@ -60,8 +60,8 @@ class MLP(nn.Module):
         ```
         """
         super().__init__()
-        self.cfg = args[0] if args else MLP.default()
-        self.cfg.set(**kvargs)
+        self.cfg = MLP.default()
+        self.cfg.set(*args, **kvargs)
         self.create()
 
     def default():
@@ -138,16 +138,16 @@ class CNN(nn.Module):
         ```
         """
         super().__init__()
-        self.cfg = args[0] if args else CNN.default()
-        self.cfg.set(**kvargs)
+        self.cfg = CNN.default()
+        self.cfg.set(*args, **kvargs)
         self.create()
 
     def default():
         return copy.deepcopy(Config(
             input    = None,       # input tensor shape:: (channels, height, width)
             output   = None,       # output tensor shape;  sets in create()
-            channel  = [16],       # number of channels in each layer
-            kernel   = [3],        # int or list: size of the convolutional kernel
+            channel  = None,       # number of channels in each layer
+            kernel   = 3,          # int or list: size of the convolutional kernel
             stride   = 1,          # int or list: stride of the convolutional kernel
             padding  = 1,          # int or list: padding around the image
             pool_ker = 2,          # int or list: max-pooling kernel
@@ -219,8 +219,8 @@ class SelfAttention(nn.Module):
             * `n_tokens=2048` -  maximum number of tokens (needed for causal==True)
         """
         super().__init__()
-        self.cfg = args[0] if args else SelfAttention.default()
-        self.cfg.set(**kvargs)
+        self.cfg = SelfAttention.default()
+        self.cfg.set(*args, **kvargs)
         self.create()
 
     def default():
@@ -287,7 +287,8 @@ class  TransformerBlock(nn.Module):
             * `casual=False` - kind of casual attention mask (True: GPT, False: Bert)
         """
         super().__init__()
-        self.cfg = args[0] if args else TransformerBlock.default()       
+        self.cfg = TransformerBlock.default()
+        self.cfg.set(*args)
 
         # мы можем одним аргументом задать параметры в att и mlp
         if 'emb' in kvargs:            
@@ -367,7 +368,8 @@ class  Transformer(nn.Module):
             * `casual=False` - kind of casual attention mask (True: GPT, False: Bert)
         """
         super().__init__()        
-        self.cfg = args[0] if args else Transformer.default()
+        self.cfg = Transformer.default()
+        self.cfg.set(*args)
 
         if 'n_blocks' in kvargs:
             self.cfg.n_blocks = kvargs['n_blocks']
@@ -413,8 +415,8 @@ class  Transformer(nn.Module):
 class  PointsBlock(nn.Module):
     def __init__(self,  *args, **kvargs) -> None:
         super().__init__()
-        self.cfg = args[0] if args else PointsBlock.default()
-        self.cfg.set(**kvargs)
+        self.cfg = PointsBlock.default()
+        self.cfg.set(*args, **kvargs)
         self.create()
 
     def default():
