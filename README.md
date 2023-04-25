@@ -67,8 +67,8 @@ class Model(nn.Module):
 
     def training_step(self, batch, batch_id):
         """ Called by the trainer during the training step """
-        x, y_pred = batch                            # the model knows the minbatch format
-        y_true = self(x)                             # (B,1)  forward function call
+        x, y_true = batch                            # the model knows the minbatch format
+        y_pred = self(x)                             # (B,1)  forward function call
         loss   = (y_pred - y_true).pow(2).mean()     # ()     loss for optimization (scalar)!        
         errors = torch.abs(y_pred.detach()-y_true)   # (B,1)  errors for each sample (one metric)
         return {'loss':loss, 'score': errors}        # if there is no score, you can simply return loss
@@ -286,3 +286,10 @@ If `trainer.score_max=True`, then the higher the score, the better (for example,
 $$
 E=mc^2
 $$
+
+```
+monitor=['score', 'loss]
+pacience
+folder
+train.transforms
+```

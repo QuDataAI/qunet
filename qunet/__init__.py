@@ -1,4 +1,5 @@
-﻿from .models  import *
+﻿from .utils   import *
+from .models  import *
 from .data    import *
 from .trainer import *
 from .optim   import *
