@@ -85,13 +85,21 @@ def subplot_history(sub, val, trn, view, x_min, x_max, c_unit, c_unit_power, uni
         if view.ticks:
             ax1.set_yticks(np.linspace(y_min, y_max, view.ticks))  
 
-    x = np.array(trn.samples)/c_unit if unit=='sample' else np.array(trn.epochs)
     if len(trn.samples):                      # trn
+        x = np.array(trn.samples)/c_unit if unit=='sample' else np.array(trn.epochs)
         y = trn.losses if kind=='loss' else trn.scores                
+        if len(x) != len(y):
+            print(f"Plot warning: {kind}: trn {len(x)} != {len(y)}")
+            x, y = x[:min(len(x),len(y))], y[:min(len(x),len(y))]
+            
         ax1.plot(x, y, 'darkblue', linewidth=0.5)
 
     if len(val.samples):                      # val
+        x = np.array(val.samples)/c_unit if unit=='sample' else np.array(val.epochs)
         y = val.losses if kind=='loss' else val.scores        
+        if len(x) != len(y):        
+            print(f"Plot warning: {kind}: val {len(x)} != {len(y)}")
+            x, y = x[:min(len(x),len(y))], y[:min(len(x),len(y))]
         ax1.plot(x, y, 'g', linewidth=1.5)
 
     ax1.legend([kind+'_trn',  kind+'_val'], loc='upper left', frameon = False)
@@ -128,7 +136,11 @@ def subplot_history(sub, val, trn, view, x_min, x_max, c_unit, c_unit_power, uni
             ax2.set_ylim(lr1, lr2)
 
         x = np.array(trn.samples)/c_unit if unit=='sample' else np.array(trn.epochs)
-        ax2.plot(x, trn.lr, ":", color='darkred')                 
+        y = trn.lr
+        if len(x) != len(y):        
+            print(f"Plot warning: {kind}: lr {len(x)} != {len(y)}")
+            x, y = x[:min(len(x),len(y))], y[:min(len(x),len(y))]
+        ax2.plot(x, y, ":", color='darkred')                 
         ax2.legend(['lr'], loc='upper right', frameon = False)
         ax2.tick_params(axis='y', colors='darkred')
         if sub == 121:

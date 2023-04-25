@@ -451,7 +451,7 @@ class Trainer:
 
         if pre_val:
             losses, scores, counts, (samples_val, steps_val, tm_val) = self.fit_epoch(0, self.model, self.data_val, train=False)
-            loss_val, score_val = self.mean(losses, scores, counts)
+            loss_val, score_val = self.mean(losses, scores, counts)            
             self.add_hist(self.hist.val, self.data_val.batch_size, samples_val, steps_val, tm_val, loss_val, score_val, self.scheduler.get_lr())
             print()
 
