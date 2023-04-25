@@ -13,7 +13,7 @@ class Trainer:
     Generic model training class.
     Any method can, of course, be overridden by inheritance or by an instance.
     """
-    def __init__(self, model, data_trn, data_val, score_max=False) -> None:
+    def __init__(self, model, data_trn, data_val=None, score_max=False) -> None:
         """
         Args:
             * model     - model for traininig;
@@ -43,7 +43,7 @@ class Trainer:
         self.folders = Config(
             loss   = None,              # folder to save the best val loss models
             score  = None,              # folder to save the best val score models
-            checks = None               # folder to save checkpoints        
+            points = None               # folder to save checkpoints        
         )
                         
         self.transforms = Config(       # функции преобразования батча (внешние)
@@ -425,7 +425,7 @@ class Trainer:
 
     def fit(self,  epochs =None,  samples=None,            
             pre_val:bool=False, period_val:int=1, period_plot:int=100,         
-            period_checks:int=1, period_val_beg:int = 4, samples_beg:int = None,
+            period_points:int=1, period_val_beg:int = 4, samples_beg:int = None,
             period_call:int = 0, 
             monitor = [],
             patience = None,
@@ -439,9 +439,9 @@ class Trainer:
             * period_plot          - period after which the training plot is displayed (in epochs)
             * period_call          - callback custom function call period
             * callback             - custom function called with period_info
-            * period_checks        - period after which checkpoints are made and the current model is saved (in epochs)
+            * period_points        - period after which checkpoints are made and the current model is saved (in epochs)
             * period_val_beg = 4   - validation period on the first samples_beg examples
-            * monitor=[]           - what to save in folders: monitor=['loss'] or monitor=['loss', 'score', 'checks']
+            * monitor=[]           - what to save in folders: monitor=['loss'] or monitor=['loss', 'score', 'points']
             * patience             - after how many epochs to stop if there was no better loss, but a better score during this time 
             * samples_beg = None   - the number of samples from the start, after which the validation period will be equal to period_val.
         """
@@ -449,7 +449,12 @@ class Trainer:
         self.set_optim_schedulers()        
         self.model.to(self.device)
 
-        if pre_val:
+        if self.data_val is not None and hasattr(self.data_val, "reset"):
+            self.data_val.reset()
+        if self.data_trn is not None and hasattr(self.data_trn, "reset"):
+            self.data_trn.reset()
+
+        if pre_val and self.data_val is not None:
             losses, scores, counts, (samples_val, steps_val, tm_val) = self.fit_epoch(0, self.model, self.data_val, train=False)
             loss_val, score_val = self.mean(losses, scores, counts)            
             self.add_hist(self.hist.val, self.data_val.batch_size, samples_val, steps_val, tm_val, loss_val, score_val, self.scheduler.get_lr())
@@ -479,7 +484,7 @@ class Trainer:
                 self.hist.trn.best.scores.append((score_trn[0].item(), self.hist.epochs, self.hist.samples, self.hist.steps))
 
             period = period_val_beg if samples_beg and  self.hist['samples'] < samples_beg else period_val
-            if  (period and epoch % period == 0) or epoch == epochs:
+            if  self.data_val is not None  and (period and epoch % period == 0) or epoch == epochs:
                 losses, scores, counts, (samples_val,steps_val,tm_val) = self.fit_epoch(epoch, self.model, self.data_val, train=False)
                 loss_val, score_val = self.mean(losses, scores, counts)
                 self.add_hist(self.hist.val, self.data_val.batch_size, samples_val, steps_val, tm_val, loss_val, score_val, lr)
@@ -506,17 +511,17 @@ class Trainer:
                     if self.best.copy and 'score' in monitor:
                         self.best.score_model  = copy.deepcopy(self.model)
 
-            if (period_plot and epoch % period_plot == 0) or epoch == epochs:
+            if period_plot > 0 and (epoch % period_plot == 0 or epoch == epochs):
                 self.run_progress()        
                 plot_history(self.hist, self.view) 
             
             if callback and period_call and epoch % period_call == 0:                
                 callback()
 
-            if self.folders.checks and 'checks' in monitor and (epoch % period_checks == 0 or epoch == epochs):
+            if self.folders.points and 'points' in monitor and (epoch % period_points == 0 or epoch == epochs):
                 score_val = score_val or [0]
                 score_trn = score_trn or [0]
-                self.save(folder=self.folders.checks, fname=f"checks_{self.now()}_score_val_{score_val[0]:.4f}_trn_{score_trn[0]:.4f}_loss_val_{loss_val}_trn_{loss_trn}.pt", model=self.model, optim=self.optim)
+                self.save(folder=self.folders.points, fname=f"points_{self.now()}_score_val_{score_val[0]:.4f}_trn_{score_trn[0]:.4f}_loss_val_{loss_val}_trn_{loss_trn}.pt", model=self.model, optim=self.optim)
 
             self.step_schedulers(1, samples_trn)
 

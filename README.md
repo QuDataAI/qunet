@@ -23,70 +23,67 @@ pip install qunet
 
 ```python
 from qunet import Data, Trainer, Scheduler_Exp
+                                             
+trainer = Trainer(model, data_trn, data_val)    
 
-# 1. create dataset
-X = torch.rand(10000,1)               
-Y = 2*X + 1
-data_trn = Data((X,Y), batch_size=128, shuffle=True)
-
-# 2. create trainer, optimizer and scheduler (if need)                                               
-tariner = Trainer(model, data_trn)    
 trainer.set_optimizer( torch.optim.SGD(model.parameters(), lr=1e-2) )
 trainer.set_scheduler( Scheduler_Exp(lr1=1e-5, lr2=1e-4, samples=100e3) )
 
-# 3. run training
-trainer.fit(epochs=100, period_plot=5)
+trainer.view.loss(y_min=0, y_max=0.5)
+trainer.fit(epochs=10, period_plot=5, monitor=['loss'])
 ```
 
 <hr>
 
 ## Model
 
-Model must be a class (successor of nn.Module) with functions (only `training_step` is required):
+Model must be a class (successor of nn.Module) with functions:
 
 * `forward(x)` function takes input `x` and returns output `y`. 
-This function is not used directly by the coach and usually contains a description of the model.
+This function is not used directly by the coach and usually contains the complete logic of the model.
 * `training_step(batch, batch_id)` - called by the trainer during the training phase. 
 Should return a scalar loss (with computational graph).
-It can also return a dictionary like `{"loss": scalar, "score": tensor}`, where score is a quality metric.
+It can also return a dictionary like `{"loss": loss, "score": torch.hstack([accuracy, tnr, tpr])}`, where score is a quality metrics.
 * `validation_step(batch, batch_id)` - similarly called at the model validation stage.
 If it does the same calculations as `training_step`, it can be omitted.
-* `predict_step(batch, batch_id)` - required when using the predict method. Should return a tensor of the model's work.
+* `predict_step(batch, batch_id)` - required when using the `predict` method. Should return a tensor `y_pred` of the model's output (or a dictionary `{"output": y_pred, "score": metrics}`, where `metrics` are any quality metrics tensor for each example).
 
 For example, for 1D linear regression  $y=f(x)$ with mse-loss and metric as |y_pred-y_true|, model looks like:
 ```python
 class Model(nn.Module):
-    def __init__(self):      
-        """ Creating Model Parameters """  
+    def __init__(self):              
         super().__init__() 
         self.fc = nn.Linear( 1, 1 )
 
-    def forward(self, x):                                 # (B,1)
-        """ Defining Model Calculations """
+    def forward(self, x):                                 # (B,1)        
         return self.fc(x)                                 # (B,1)
 
-    def training_step(self, batch, batch_id):
-        """ Called by the trainer during the training step """
+    def training_step(self, batch, batch_id):        
         x, y_true = batch                                 # the model knows the minbatch format
         y_pred = self(x)                                  # (B,1)  forward function call
         loss  = (y_pred - y_true).pow(2).mean()           # ()     loss for optimization (scalar)!        
         error = torch.abs(y_pred.detach()-y_true).mean()  # (B,1)  error for batch samples (one metric)
         return {'loss':loss, 'score': error}              # if there is no score, you can simply return loss
 ```
-As we can see, the model description interface is the same as the library interface <a href="https://lightning.ai/">Pytorch Lightning</a>
+As we can see, the model description interface is the same as the library interface <a href="https://lightning.ai/">PyTorch Lightning</a>
 
 <hr>
 
 ## Data
 
-The `Data` - training or validation data class. It can be overridden or pytorch DataLoader can be used.
-Iterator `__next__`  must return an mini-batch, the same structure as passed `dataset` when creating the Data.
+QuNet has a Data class - data for training or validation  model. It can be overridden or pytorch DataLoader can be used.
+The iterator `__next__`  is supposed  must return an mini-batch, has the same structure as passed `dataset` when creating the `Data`.
 For example, let's create training data in which two tensors X1,X2 are the input of the model and one tensor Y is the output (target):
 ```python    
-X1, X2 = np.rand(1000,3), np.rand(1000,3,20)
-Y = X1 * torch.Sigmoid(X2).mean(-1)
+from qunet import Data
 
-data_trn = Data( dataset=( (X1,X2), Y ) )  
+X1, X2 = torch.rand(1000,3), torch.rand(1000,3,20)
+Y = X1 * torch.sigmoid(X2).mean(-1)
+
+data_trn = Data( dataset=( (X1,X2), Y ), batch_size=100)  
+ 
+for (x1,x2), y in data_trn:
+    print(x1.shape, x2.shape, y.shape)
 ```        
 All tensors in the dataset are assumed to have the same length (by first index).
 The model is responsible for interpreting the composition of the mini-batch.
@@ -154,49 +151,64 @@ trainer.fit(epochs=None,   samples=None,
 * `period_checks`  - the period with which the checkpoints are made and the current model is saved (in epochs)
 * `period_val_beg` - the period with which the validation model runs on the first `samples_beg` samples. Used when validation needs to be done less frequently at the start of training.
 * `samples_beg`   -  the number of samples from the start, after which the validation period will be equal to `period_val`
+* `monitor=[]`- what to save in folders: monitor=['loss'] or monitor=['loss', 'score', 'checks']
+* `patience`  - after how many epochs to stop if there was no better loss, but a better score during this time 
 
 <hr>
 
 ## Visualization of the training process
 
+If, when calling `fit`, its argument is `period_plot > 0`, then every `period_plot` a training plot will be displayed.
+By default it contains score and loss:
+
 <img src="img/loss.png">
 
+You can customize the appearance of graphs using the following trainer options:
 
 ```python
-trainer.view = {                    
-    'w'            : 12,         # plt-plot width
-    'h'            :  5,         # plt-plot height
+trainer.view = Config(
+    w  = 12,                   # plt-plot width
+    h  =  5,                   # plt-plot height
+    units = Config(
+        unit  = 'epoch',       # 'epoch' | 'sample'
+        count = 1e6,           # units for number of samples
+        time  = 's'            # time units: ms, s, m, h
+    ),
 
-    'count_units'  : 1e6,        # units for number of samples
-    'time_units'   : 's',        # time units: ms, s, m, h
+    x_min = 0,                 # minimum value in samples on the x-axis (if < 0 last x_min samples)
+    x_max = None,              # maximum value in samples on the x-axis (if None - last)
 
-    'x_min'        : 0,          # minimum value in samples on the x-axis (if < 0 last x_min samples)
-    'x_max'        : None,       # maximum value in samples on the x-axis (if None - last)
-
-    'loss': {                                
-        'show'  : True,          # show loss subplot
-        'y_min' : None,          # fixing the minimum value on the y-axis
-        'y_max' : None,          # fixing the maximum value on the y-axis
-        'ticks' : None,          # how many labels on the y-axis
-        'lr'    : True,          # show learning rate        
-        'labels': True,          # show labels (training events)
-        'trn_checks': True,      # show the achievement of the minimum training loss (dots)
-        'val_checks': True,      # show the achievement of the minimum validation loss (dots)
-    },
-
-    'score': {                    
-        'show'  : True,          # show score subplot    
-        'y_min' : None,          # fixing the minimum value on the y-axis
-        'y_max' : None,          # fixing the maximum value on the y-axis
-        'ticks' : None,          # how many labels on the y-axis
-        'lr'    : True,          # show learning rate
-        'labels': True,          # show labels (training events)
-        'trn_checks': True,      # show the achievement of the optimum training score (dots)                
-        'val_checks': True,      # show the achievement of the optimum validation score (dots)                
-    }
-}
+    loss = Config(                                
+        show  = True,          # show loss subplot
+        y_min = None,          # fixing the minimum value on the y-axis
+        y_max = None,          # fixing the maximum value on the y-axis
+        ticks = None,          # how many labels on the y-axis
+        lr    = True,          # show learning rate
+        labels= True,          # show labels (training events)                
+        trn_checks = True,     # show the achievement of the minimum training loss (dots)
+        val_checks = True      # show the achievement of the minimum validation loss (dots)
+    ),            
+    score = Config(                                
+        show  = True,          # show score subplot    
+        y_min = None,          # fixing the minimum value on the y-axis
+        y_max = None,          # fixing the maximum value on the y-axis
+        ticks = None,          # how many labels on the y-axis
+        lr    = True,          # show learning rate                
+        labels = True,         # show labels (training events)
+        trn_checks = True,     # show the achievement of the optimum training score (dots)
+        val_checks = True      # show the achievement of the optimum validation score (dots)
+    ),
+)
 ```
 
+You can change one parameter:
+```python
+trainer.view.loss.lr = False   # do not show learning rate on loss plot
+```
+or immediately a group of parameters:
+```python
+trainer.view.units(unit='sample', count=1e3, time='m')
+```
 
 <hr>
 
@@ -205,15 +217,17 @@ trainer.view = {
 Schedulers allow you to control the learning process by changing the learning rate according to the required algorithm.
 There can be one or more schedulers. In the latter case, they are processed sequentially one after another.
 There are the following schedulers:
-* `Scheduler_Line(lr1, lr2, samples)` - changes the learning rate from `lr1` to `lr2` over `samples` training samples. If `lr1` is not specified, the optimizer's current lr is used for it.
-* `Scheduler_Exp(lr1, lr2, samples)` - similar, but changing `lr` from `lr1` to `lr2` is exponential.
-* `Scheduler_Cos(lr1, lr_hot,  lr2, samples, warmup)` - changing `lr` by cosine with preliminary linear heating during `warmup` samples from `lr1` to `lr_hot`.
-* `Scheduler_Const(lr1, samples)` - wait for `samples` samples with unchanged `lr` (as usual, the last value is taken if `lr1` is not set). This scheduler is useful when using lists of schedulers.
+* `Scheduler_Line(lr1, lr2, epochs)` - changes the learning rate from `lr1` to `lr2` over `epochs` training epochs. If `lr1` is not specified, the optimizer's current lr is used for it.
+* `Scheduler_Exp(lr1, lr2, epochs)` - similar, but changing `lr` from `lr1` to `lr2` is exponential.
+* `Scheduler_Cos(lr1, lr_hot,  lr2, epochs, warmup)` - changing `lr` by cosine with preliminary linear heating during `warmup` epochs from `lr1` to `lr_hot`.
+* `Scheduler_Const(lr1, epochs)` - wait for `epochs` epochs with unchanged `lr` (as usual, the last value is taken if `lr1` is not set). This scheduler is useful when using lists of schedulers.
+
+Instead of `epochs`, you can specify `samples` (number of training samples)
 
 Each scheduler has a `plot` method that can be used to display the training plot:
 ```python
-sch = Scheduler_Cos(lr1=1e-5, lr_hot=1e-2, lr2=1e-4,  samples=100e3, warmup=1e3)
-sch.plot(log=True)
+sch = Scheduler_Cos(lr1=1e-5, lr_hot=1e-2, lr2=1e-4,  samples=10e3,  warmup=1e3)
+sch.plot(log=True, samples=20e3, epochs=100)
 ```
 You can also call the `trainer.plot_schedulers()` method of the `Trainer` class.
 It will draw the schedule of the list of schedulers added to the trainer.
@@ -235,28 +249,55 @@ Example:
 
 ## Best Model and Checkpoints
 
-If you set these flags to `True`, then `Trainer` will save in memory the last best model by validation score or/and loss:
-```python
-trainer.copy_best_score_model = True  # to copy the best model by val score
-trainer.copy_best_loss_model  = True  # to copy the best model by val loss
+Trainer can store the best models in memory or on disk.
+Smaller models are convenient to keep in memory when a better validation loss or metric (the first one in the score list) is reached. 
+To do this, you need to enable `train.best.copy` and specify the target value for which you want to remember the model in the `monitor` list:
 ```
+trainer.best.copy = True
+trainer.fit(monitor=['score', 'loss'])
+```
+The last best model will be in `trainer.best.loss_model` and `trainer.best.score_model`.
+The values of the corresponding metrics are in `trainer.best.loss` and `trainer.best.score`.
 These models can be used to roll back if something went wrong:
 ```python
-train.model = copy.deepcopy(trainer.best_score_model)   
+trainer.model = copy.deepcopy(trainer.best.score_model)   
 ```
-
-If the following folders are defined (by default `None`), then the best model by validation loss, score will be saved on disk and intermediate versions of the model will be saved with the period `period_checks` (argument of `fit` function).
+To save the best models by loss and/or score on disk, you need to set folders:
 ```python
-trainer.folder_loss   = "log/best_loss"   # folder to save the best val loss models
-trainer.folder_score  = "log/best_score"  # folder to save the best val score models
-trainer.folder_checks = "log/checkpoints" # folder to save checkpoints        
+trainer.folders(loss='log/loss', score='log/loss',  points='log/checkpoints',)
 ```
-The best score is the metric of the first column of the second return tensor in the metrics function of the model.
+Saving will occur if you specify `monitor=['score', 'loss', 'points']` in `fit`
+
+The best score is the metric of the first element in the score.
 If `trainer.score_max=True`, then the higher the score, the better (for example, accuracy).
 <hr>
 
 ## Batch Argumentation
 
+When working with images, in order to "enlarge" the dataset, it is necessary to do their augmentation.
+To do this, you need to define the `trainer.transformers.trn` (and/or 'val') functions:
+
+```python
+augmentation_trn = A.Compose([
+    A.HorizontalFlip(p=0.5),                                  
+    A.ShiftScaleRotate(rotate_limit=30),
+    A.Normalize(),   # img = (img/max_pixel_value - mean) / (std)                                
+    ToTensorV2(),    # numpy -> torch;  (B,H,W,C) -> (B,C,H,W)
+])
+ 
+def transform_trn(batch, batch_id):
+    x, y = batch
+    B,H,W,C = x.shape
+    new_x = torch.empty(B,C,H,W)
+    for i in range(len(x)):        
+        new_x[i] = augmentation_trn(image=x[i].numpy())["image"]                
+    return (new_x, y)
+
+trainer.transforms(trn = transform_trn);
+```
+The `transform_trn` function will be called during the training phase before sending the batch to the GPU.
+
+An example of such an argumentation can be found in the <a href="https://colab.research.google.com/drive/1ThxnMrAjuFTGKXLI-93oRa9doNpP32y4?usp=sharing">notebook CIFAR10</a>  
 <hr>
 
 

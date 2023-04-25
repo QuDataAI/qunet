@@ -20,6 +20,10 @@ class Data:
 
         self.N = self.count(dataset)    
 
+    def reset(self):
+        self.start = 0
+        self.pack_id = 0
+
     #---------------------------------------------------------------------------
 
     def count(self, data):
