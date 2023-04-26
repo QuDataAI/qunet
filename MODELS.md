@@ -78,10 +78,10 @@ Self Attention
 
 Args:         
 
-* `emb:int`  - tokens embedding dim
-* `n_heads:int` - number of heads emb % n_heads == 0 !            
+* `E:int`  - tokens embedding dim
+* `H:int` - number of heads E % H == 0 !            
 * `drop=0` - dropout in attention and mlp            
-* `res=1` - kind of skip-connections (0: none, 1: usial, 2: train one for all emb, 3: train for each emb)
+* `res=1` - kind of skip-connections (0: none, 1: usial, 2: train one for all E, 3: train for each E)
 * `casual=False` - kind of casual attention mask (True: GPT, False: Bert)
 * `n_tokens=2048` -  maximum number of tokens (needed for causal==True)
 
@@ -92,10 +92,10 @@ Args:
 One Transformer Block (it is all you need)
 Args:         
 
-* `emb:int` -  tokens embedding dim
-* `n_heads:int` - number of heads emb % n_heads == 0 !            
+* `E:int` -  tokens embedding dim
+* `H:int` - number of heads E % H == 0 !            
 * `drop=0` - dropout in attention and mlp
-* `res=1` - kind of skip-connections (0: none, 1: usial, 2: train one for all emb, 3: train for each emb)
+* `res=1` - kind of skip-connections (0: none, 1: usial, 2: train one for all E, 3: train for each E)
 * `casual=False` - kind of casual attention mask (True: GPT, False: Bert)
 
 
@@ -107,18 +107,18 @@ Transformer is all you need
 
 Args:         
 
-* `emb:int` - tokens embedding dim
-* `n_heads` - number of heads emb % n_heads == 0 !
+* `E:int` - tokens embedding dim
+* `H=1` - number of heads E % H == 0 !
 * `n_blocks=1` - number of transformer blocks
 * `drop=0` - dropout in attention and mlp
-* `res=1` - kind of skip-connections (0: none, 1: usial, 2: train one for all emb, 3: train for each emb)
+* `res=1` - kind of skip-connections (0: none, 1: usial, 2: train one for all E, 3: train for each E)
 * `casual=False` - kind of casual attention mask (True: GPT, False: Bert)
 
 Example:
 ```python
-trf = Transformer(n_blocks=5, emb=16, n_heads=2)
+trf = Transformer(n_blocks=5, E=16, H=2)
 
-B, T, E = 1, 10, trf.cfg.block.att.emb
+B, T, E = 1, 10, trf.cfg.block.att.E
 X = torch.empty( (B,T,E) )        
 Y = trf(X)
 print(X.shape,"->",Y.shape)

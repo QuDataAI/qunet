@@ -211,12 +211,12 @@ class SelfAttention(nn.Module):
         """
         Self Attention
         Args:         
-            * `emb:int`  - tokens embedding dim
-            * `n_heads:int` - number of heads emb % n_heads == 0 !            
-            * `drop=0` - dropout in attention and mlp            
-            * `res=1` - kind of skip-connections (0: none, 1: usial, 2: train one for all emb, 3: train for each emb)
-            * `casual=False` - kind of casual attention mask (True: GPT, False: Bert)
-            * `n_tokens=2048` -  maximum number of tokens (needed for causal==True)
+            * `E:int`  - tokens embedding dim
+            * `H:int`  - number of heads E % H == 0 !            
+            * `drop=0` - dropout in attention
+            * `res=1` - kind of skip-connections (0: none, 1: usial, 2: train one for all E, 3: train for each E)
+            * `casual = False` - kind of casual attention mask (True: GPT, False: Bert)
+            * `max_T  = 2048` -  maximum number of tokens (needed for causal==True)
         """
         super().__init__()
         self.cfg = SelfAttention.default()
@@ -225,20 +225,20 @@ class SelfAttention(nn.Module):
 
     def default():
         return copy.deepcopy(Config(
-            emb    = 64,        # размерность эмбедига
-            n_heads  = 8,         # число голов (emb % n_heads == 0 !)
+            E  = None,          # размерность эмбедига
+            H  = 1,             # число голов (E % H == 0 !)
             causal = False,     # причинное внимание (как в GPT) иначе как в BERT
-            n_tokens = 2048,    # максимальное число токенов (нужно для causal==True)
+            max_T = 2048,       # максимальное число токенов (нужно для causal==True)
             drop   = 0,         # dropout на выходе внимания
         ))
     
     def create(self):
         cfg = self.cfg
-        assert cfg.emb > 0 and cfg.n_heads > 0, f"must be emb and n_heads in cfg:{cfg.get()}"
-        assert cfg.emb % cfg.n_heads == 0,  "emb must be div by n_heads: {cfg.emb} % {cfg.n_heads} != 0"
+        assert cfg.E > 0 and cfg.H > 0, f"must be E and H in cfg:{cfg.get()}"
+        assert cfg.E % cfg.H == 0,  "E must be div by H: {cfg.E} % {cfg.H} != 0"
 
         cfg = self.cfg
-        T,E = cfg.n_tokens, cfg.emb
+        T,E = cfg.max_T, cfg.E
 
         self.c_attn = nn.Linear(E,3*E)  # key, query, value projections for all heads
         self.c_proj = nn.Linear(E,  E)  # output projection
@@ -251,14 +251,14 @@ class SelfAttention(nn.Module):
             self.register_buffer("bias", torch.tril(torch.ones(T, T)).view(1,1,T,T))
 
     def forward(self, x):  # (B,T,E)
-        B,T,E = x.size() # batch size, sequence length, embedding dimensionality (emb)
-        assert E == self.cfg.emb, f"wrong input {E} != {self.cfg.emb}"
+        B,T,E = x.size() # batch size, sequence length, embedding dimensionality (E)
+        assert E == self.cfg.E, f"wrong input {E} != {self.cfg.E}"
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        q,k,v  = self.c_attn(x).split(self.cfg.emb, dim=2)
-        k = k.view(B,T, self.cfg.n_heads, E // self.cfg.n_heads).transpose(1,2) # (B, nh, T, hs) hs = E/nh
-        q = q.view(B,T, self.cfg.n_heads, E // self.cfg.n_heads).transpose(1,2) # (B, nh, T, hs)
-        v = v.view(B,T, self.cfg.n_heads, E // self.cfg.n_heads).transpose(1,2) # (B, nh, T, hs)
+        q,k,v  = self.c_attn(x).split(self.cfg.E, dim=2)
+        k = k.view(B,T, self.cfg.H, E // self.cfg.H).transpose(1,2) # (B, nh, T, hs) hs = E/nh
+        q = q.view(B,T, self.cfg.H, E // self.cfg.H).transpose(1,2) # (B, nh, T, hs)
+        v = v.view(B,T, self.cfg.H, E // self.cfg.H).transpose(1,2) # (B, nh, T, hs)
 
         # causal self-attention; Self-attend: (B, nh, T, hs)x(B, nh, hs, T) -> (B, nh, T,T)
         att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
@@ -280,23 +280,23 @@ class  TransformerBlock(nn.Module):
         """
         One Transformer Block (it is all you need)
         Args:         
-            * `emb:int` -  tokens embedding dim
-            * `n_heads:int` - number of heads emb % n_heads == 0 !            
+            * `E:int`  -  tokens embedding dim
+            * `H:int`  - number of heads E % H == 0 !            
             * `drop=0` - dropout in attention and mlp
-            * `res=1` - kind of skip-connections (0: none, 1: usial, 2: train one for all emb, 3: train for each emb)
-            * `casual=False` - kind of casual attention mask (True: GPT, False: Bert)
+            * `res=1`  - kind of skip-connections (0: none, 1: usial, 2: train one for all E, 3: train for each E)
+            * `casual = False` - kind of casual attention mask (True: GPT, False: Bert)
         """
         super().__init__()
         self.cfg = TransformerBlock.default()
         self.cfg.set(*args)
 
         # мы можем одним аргументом задать параметры в att и mlp
-        if 'emb' in kvargs:            
-            self.cfg.att.emb    = kvargs['emb']
-            self.cfg.mlp.input  = kvargs['emb']
-            self.cfg.mlp.output = kvargs['emb']
-        if 'n_heads' in kvargs:
-            self.cfg.att.n_heads = kvargs['n_heads']
+        if 'E' in kvargs:            
+            self.cfg.att.E      = kvargs['E']
+            self.cfg.mlp.input  = kvargs['E']
+            self.cfg.mlp.output = kvargs['E']
+        if 'H' in kvargs:
+            self.cfg.att.H = kvargs['H']
         if 'res' in kvargs:            
             self.cfg.att.res = kvargs['res']
             self.cfg.mlp.res = kvargs['res']
@@ -316,25 +316,25 @@ class  TransformerBlock(nn.Module):
 
     def create(self): 
         cfg = self.cfg
-        assert cfg.att.emb > 0 and cfg.att.emb == cfg.mlp.input and cfg.mlp.input == cfg.mlp.output,  f"TransformerBlock: embedding needs to be defined: emb={cfg.emb}, input={cfg.mlp.input}, output={cfg.mlp.output}"
+        assert cfg.att.E > 0 and cfg.att.E == cfg.mlp.input and cfg.mlp.input == cfg.mlp.output,  f"TransformerBlock: embedding needs to be defined: E={cfg.E}, input={cfg.mlp.input}, output={cfg.mlp.output}"
 
-        self.ln_1 = nn.LayerNorm (cfg.att.emb)
+        self.ln_1 = nn.LayerNorm (cfg.att.E)
         self.att  = SelfAttention(cfg.att)
 
         self.mlp = None
         if cfg.mlp.stretch > 0:
-            self.ln_2 = nn.LayerNorm(cfg.att.emb)
+            self.ln_2 = nn.LayerNorm(cfg.att.E)
             self.mlp  = MLP(cfg.mlp)
 
         if   cfg.att.res == 3:     # train multiplier for each components
-            self.w_att = nn.Parameter( torch.ones( cfg.att.emb ) )            
+            self.w_att = nn.Parameter( torch.ones( cfg.att.E ) )            
         elif cfg.att.res == 2:     # train common multiplier
             self.w_att   = nn.Parameter( torch.ones(1) )            
         else:                     # constant multiplayer
             self.register_buffer("w_att", torch.Tensor(cfg.att.res))            
 
         if   cfg.mlp.res == 3:     # train multiplier for each components            
-            self.w_mlp = nn.Parameter( torch.ones( cfg.att.emb ) )
+            self.w_mlp = nn.Parameter( torch.ones( cfg.att.E ) )
         elif cfg.mlp.res == 2:     # train common multiplier            
             self.w_mlp   = nn.Parameter( torch.ones(1) )
         else:                     # constant multiplayer            
@@ -360,11 +360,11 @@ class  Transformer(nn.Module):
         """
         Transformer is all you need
         Args:         
-            * `emb:int` - tokens embedding dim
-            * `n_heads` - number of heads emb % n_heads == 0 !
+            * `E:int` - tokens embedding dim
+            * `H` - number of heads E % H == 0 !
             * `n_blocks=1` - number of transformer blocks
             * `drop=0` - dropout in attention and mlp
-            * `res=1` - kind of skip-connections (0: none, 1: usial, 2: train one for all emb, 3: train for each emb)
+            * `res=1` - kind of skip-connections (0: none, 1: usial, 2: train one for all E, 3: train for each E)
             * `casual=False` - kind of casual attention mask (True: GPT, False: Bert)
         """
         super().__init__()        
@@ -375,12 +375,12 @@ class  Transformer(nn.Module):
             self.cfg.n_blocks = kvargs['n_blocks']
 
         # мы можем одним аргументом задать параметры в att и mlp всех блоков
-        if 'emb' in kvargs:        
-            self.cfg.block.att.emb    = kvargs['emb']
-            self.cfg.block.mlp.input  = kvargs['emb']
-            self.cfg.block.mlp.output = kvargs['emb']
-        if 'n_heads' in kvargs:
-            self.cfg.block.att.n_heads = kvargs['n_heads']
+        if 'E' in kvargs:        
+            self.cfg.block.att.E    = kvargs['E']
+            self.cfg.block.mlp.input  = kvargs['E']
+            self.cfg.block.mlp.output = kvargs['E']
+        if 'H' in kvargs:
+            self.cfg.block.att.H = kvargs['H']
         if 'res' in kvargs:            
             self.cfg.block.att.res = kvargs['res']
             self.cfg.block.mlp.res = kvargs['res']
@@ -421,7 +421,7 @@ class  PointsBlock(nn.Module):
 
     def default():
         return copy.deepcopy(Config(
-            emb  = 64,          # размерность эмбедига
+            E  = 64,          # размерность эмбедига
             max  = False,
             mean = True,
             res  = 1,           # residual петли (0-нет, 1-обычные, 2-тренеруемые)
@@ -432,10 +432,10 @@ class  PointsBlock(nn.Module):
     def create(self):
         cfg = self.cfg
         assert cfg.mean or cfg.max, f"PointsBlock need mean or/and max, cfg={cfg.get()}"
-        self.cfg.mlp1(input = cfg.emb, output = cfg.emb)
-        self.cfg.mlp2(input = cfg.emb, output = cfg.emb)
+        self.cfg.mlp1(input = cfg.E, output = cfg.E)
+        self.cfg.mlp2(input = cfg.E, output = cfg.E)
 
-        E, E2 = cfg.emb, cfg.emb
+        E, E2 = cfg.E, cfg.E
         self.ln_1 = nn.LayerNorm(E)
         self.ln_2 = nn.LayerNorm(E)
 
