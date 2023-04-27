@@ -19,7 +19,7 @@ class SelfAttention(nn.Module):
             * `drop=0` - dropout in attention
             * `res=1` - kind of skip-connections (0: none, 1: usial, 2: train one for all E, 3: train for each E)
             * `casual = False` - kind of casual attention mask (True: GPT, False: Bert)
-            * `max_T  = 2048` -  maximum number of tokens (needed for causal==True)
+            * `T_max  = 2048` -  maximum number of tokens (needed for causal==True)
         """
         super().__init__()
         self.cfg = SelfAttention.default()
@@ -30,8 +30,9 @@ class SelfAttention(nn.Module):
         return copy.deepcopy(Config(
             E  = None,          # размерность эмбедига
             H  = 1,             # число голов (E % H == 0 !)
+            res= 1,             # kind of skip-connections
             causal = False,     # причинное внимание (как в GPT) иначе как в BERT
-            max_T = 2048,       # максимальное число токенов (нужно для causal==True)
+            T_max = 2048,       # максимальное число токенов (нужно для causal==True)
             drop   = 0,         # dropout на выходе внимания
         ))
     
@@ -39,9 +40,8 @@ class SelfAttention(nn.Module):
         cfg = self.cfg
         assert cfg.E > 0 and cfg.H > 0, f"must be E and H in cfg:{cfg.get()}"
         assert cfg.E % cfg.H == 0,  "E must be div by H: {cfg.E} % {cfg.H} != 0"
-
-        cfg = self.cfg
-        T,E = cfg.max_T, cfg.E
+        
+        T,E = cfg.T_max, cfg.E
 
         self.c_attn = nn.Linear(E,3*E)  # key, query, value projections for all heads
         self.c_proj = nn.Linear(E,  E)  # output projection
@@ -88,6 +88,7 @@ class  TransformerBlock(nn.Module):
             * `drop=0` - dropout in attention and mlp
             * `res=1`  - kind of skip-connections (0: none, 1: usial, 2: train one for all E, 3: train for each E)
             * `casual = False` - kind of casual attention mask (True: GPT, False: Bert)
+            * 'T_max = 2048'- maximum number of tokens (needed for causal==True)
         """
         super().__init__()
         self.cfg = TransformerBlock.default()
@@ -98,23 +99,30 @@ class  TransformerBlock(nn.Module):
             self.cfg.att.E      = kvargs['E']
             self.cfg.mlp.input  = kvargs['E']
             self.cfg.mlp.output = kvargs['E']
+
         if 'H' in kvargs:
             self.cfg.att.H = kvargs['H']
+
         if 'res' in kvargs:            
             self.cfg.att.res = kvargs['res']
             self.cfg.mlp.res = kvargs['res']
+
         if 'drop' in kvargs:
-            self.cfg.att.drop = kvargs['att']
+            self.cfg.att.drop = kvargs['drop']
             self.cfg.mlp.drop = kvargs['drop']
+
         if 'casual' in kvargs:
             self.cfg.att.casual = kvargs['casual']
+
+        if 'T_max'  in kvargs:
+            self.cfg.att.T_max = kvargs['T_max']
 
         self.create()
 
     def default():
         return copy.deepcopy(Config(            
             att = SelfAttention.default(),
-            mlp = MLP.default(),
+            mlp = Config(MLP.default(), res=1)
         ))
 
     def create(self): 
@@ -128,20 +136,22 @@ class  TransformerBlock(nn.Module):
         if cfg.mlp.stretch > 0:
             self.ln_2 = nn.LayerNorm(cfg.att.E)
             self.mlp  = MLP(cfg.mlp)
-
+    
+        cfg.att.res = max(0, min(3, cfg.att.res))
         if   cfg.att.res == 3:     # train multiplier for each components
             self.w_att = nn.Parameter( torch.ones( cfg.att.E ) )            
         elif cfg.att.res == 2:     # train common multiplier
             self.w_att   = nn.Parameter( torch.ones(1) )            
-        else:                     # constant multiplayer
-            self.register_buffer("w_att", torch.Tensor(cfg.att.res))            
+        else:                     # constant multiplayer (0 or 1)           
+            self.register_buffer("w_att", torch.tensor(float(cfg.att.res)))                        
 
+        cfg.mlp.res = max(0, min(3, cfg.mlp.res))
         if   cfg.mlp.res == 3:     # train multiplier for each components            
             self.w_mlp = nn.Parameter( torch.ones( cfg.att.E ) )
         elif cfg.mlp.res == 2:     # train common multiplier            
             self.w_mlp   = nn.Parameter( torch.ones(1) )
-        else:                     # constant multiplayer            
-            self.register_buffer("w_mlp", torch.Tensor(cfg.mlp.res))
+        else:                     # constant multiplayer   (0 or 1)                     
+            self.register_buffer("w_mlp", torch.tensor(float(cfg.mlp.res)))            
 
 
     def forward(self, x):                          # (B,T,E)
@@ -169,6 +179,7 @@ class  Transformer(nn.Module):
             * `drop=0` - dropout in attention and mlp
             * `res=1` - kind of skip-connections (0: none, 1: usial, 2: train one for all E, 3: train for each E)
             * `casual=False` - kind of casual attention mask (True: GPT, False: Bert)
+            * 'T_max = 2048'- maximum number of tokens (needed for causal==True)
         """
         super().__init__()        
         self.cfg = Transformer.default()
@@ -179,37 +190,41 @@ class  Transformer(nn.Module):
 
         # мы можем одним аргументом задать параметры в att и mlp всех блоков
         if 'E' in kvargs:        
-            self.cfg.block.att.E    = kvargs['E']
+            self.cfg.block.att.E      = kvargs['E']
             self.cfg.block.mlp.input  = kvargs['E']
             self.cfg.block.mlp.output = kvargs['E']
+
         if 'H' in kvargs:
             self.cfg.block.att.H = kvargs['H']
+
         if 'res' in kvargs:            
             self.cfg.block.att.res = kvargs['res']
             self.cfg.block.mlp.res = kvargs['res']
+
         if 'drop' in kvargs:
-            self.cfg.block.att.drop = kvargs['att']
+            self.cfg.block.att.drop = kvargs['drop']
             self.cfg.block.mlp.drop = kvargs['drop']
+
         if 'casual' in kvargs:
             self.cfg.block.att.casual = kvargs['casual']
+
+        if 'T_max'  in kvargs:
+            self.cfg.block.att.T_max = kvargs['T_max']
+
 
         self.create()
 
     def default():
         return copy.deepcopy(Config(
             n_blocks  = 1,             # число слоёв трансформера
-            block = Config(                       
-                att = SelfAttention.default(),
-                mlp = MLP.default(),
-            ),
+            block = TransformerBlock.default()            
         ))
 
     def create(self):        
         self.blocks= nn.ModuleList([TransformerBlock(self.cfg.block) for _ in range(self.cfg.n_blocks)])
 
     def forward(self, x):                          # (B,T,E)
-        for i, block in enumerate(self.blocks):
-            #if CFG.frozen and self.training and i > CFG.L_frozen: torch.set_grad_enabled(True)
+        for block in self.blocks:            
             x = block(x)                           # (B,T,E)
         return x
 

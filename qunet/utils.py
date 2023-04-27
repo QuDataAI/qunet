@@ -51,14 +51,14 @@ class Config:
                 if k not in self.__dict__:
                     self.__dict__[k] = Config()
                 self.__dict__[k].set_cfg(v)
-            elif not k.startswith("__"):
+            elif not k.startswith("__") and k != 'check_variable_existence':
                 self.__dict__[k] = v
 
     def get(self, end=", ", exclude=[]):
         """ output of config parameters """
         res = ""
         for k,v in self.__dict__.items():
-            if not k.startswith("__") and k not in ["get", "check_variable_existence"] + exclude:
+            if not k.startswith("__") and k not in ["check_variable_existence"] + exclude:
                 if isinstance(v, Config):
                     res += f"{k}:"+" {"+v.get()+"}"+end
                 else:
@@ -70,7 +70,12 @@ class Config:
 
 
 if __name__ == '__main__':    
-    if True:
+
+    cfg1 = Config(x=1, y=2)
+    cfg2 = Config(cfg1, z=3)
+    print(cfg2)
+
+    if False:
         cfg = Config(x=2, y=5, z=Config(v=0))
         print(cfg)         # x:2, y:5, z: {v:0, }, 
         cfg(x=5, y=2)      # x:5, y:2, z: {v:0, }, 
@@ -79,20 +84,20 @@ if __name__ == '__main__':
         cfg(cfg2)          # x:0, y:2, z: {v:0, }, 
         print(cfg) 
 
-
-    print("---------")
-    cfg = Config(
-        x=3, 
-        z=4, 
-        loss=Config(z=5)
-    )
-    print('cfg: ', cfg)
-    cfg.loss(x=8)
-    print('cfg: ', cfg)
-    cfg.loss.protect(False)
-    cfg.loss(a='a')
-    print('cfg: ', cfg)
-    print('-----------------')
-    cfg2 = Config( x=5 )
-    cfg.set_cfg(cfg2)
-    print(cfg)
+    if False:
+        print("---------")
+        cfg = Config(
+            x=3, 
+            z=4, 
+            loss=Config(z=5)
+        )
+        print('cfg: ', cfg)
+        cfg.loss(x=8)
+        print('cfg: ', cfg)
+        cfg.loss.protect(False)
+        cfg.loss(a='a')
+        print('cfg: ', cfg)
+        print('-----------------')
+        cfg2 = Config( x=5 )
+        cfg.set_cfg(cfg2)
+        print(cfg)

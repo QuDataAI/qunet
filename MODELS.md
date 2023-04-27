@@ -82,8 +82,8 @@ Args:
 * `H:int` - number of heads E % H == 0 !            
 * `drop=0` - dropout in attention and mlp            
 * `res=1` - kind of skip-connections (0: none, 1: usial, 2: train one for all E, 3: train for each E)
-* `casual=False` - kind of casual attention mask (True: GPT, False: Bert)
-* `n_tokens=2048` -  maximum number of tokens (needed for causal==True)
+* `casual = False` - kind of casual attention mask (True: GPT, False: Bert)
+* `T_max  = 2048` -  maximum number of tokens (needed for causal==True)
 
 <hr>
 

@@ -13,7 +13,7 @@ class Trainer:
     Generic model training class.
     Any method can, of course, be overridden by inheritance or by an instance.
     """
-    def __init__(self, model, data_trn, data_val=None, score_max=False) -> None:
+    def __init__(self, model, data_trn=None, data_val=None, score_max=False) -> None:
         """
         Args:
             * model     - model for traininig;
@@ -21,9 +21,7 @@ class Trainer:
             * data_val  - data for validation (instance of Data or DataLoader); may be missing;
             * score_max - consider that the metric (the first column of the second tensor returned by the function `metrics` of the model ); should strive to become the maximum (for example, so for accuracy).            
         """
-        self.model      = model
-        self.data_trn   = data_trn
-        self.data_val   = data_val
+        self.model     = model        
         self.score_max = score_max       # метрика должна быть максимальной (например accuracy)
 
         self.device     = "cuda" if torch.cuda.is_available() else "cpu"         
@@ -31,6 +29,8 @@ class Trainer:
         self.optim      = None
         self.schedulers = []             # список шедулеров для управления обучением
         self.scheduler  = Scheduler()    # текущий шедулер
+
+        self.data = Config(trn = data_trn,  val = data_val)
 
         self.best = Config(
             score = None,               # best val score
@@ -72,7 +72,7 @@ class Trainer:
                 ticks = None,          # how many labels on the y-axis
                 lr    = True,          # show learning rate
                 labels= True,          # show labels (training events)                
-                trn_checks = True,     # show the achievement of the minimum training loss (dots)
+                trn_checks = False,     # show the achievement of the minimum training loss (dots)
                 val_checks = True      # show the achievement of the minimum validation loss (dots)
             ),            
             score = Config(                                
@@ -82,7 +82,7 @@ class Trainer:
                 ticks = None,          # how many labels on the y-axis
                 lr    = True,          # show learning rate                
                 labels = True,         # show labels (training events)
-                trn_checks = True,     # show the achievement of the optimum training score (dots)                
+                trn_checks = False,     # show the achievement of the optimum training score (dots)                
                 val_checks = True      # show the achievement of the optimum validation score (dots)                
             ),
         )
@@ -320,7 +320,9 @@ class Trainer:
         if scores_all is not None:
             scores_all = scores_all.cpu()
         if losses_all is not None:
+            self.fit_progress(epoch, train, 1, losses_all, scores_all, counts_all, samples, steps, time.time()-beg)
             losses_all = losses_all.cpu()
+
         return losses_all, scores_all, counts_all, (samples, steps, time.time()-beg)
 
     #---------------------------------------------------------------------------
@@ -364,24 +366,37 @@ class Trainer:
 
     #---------------------------------------------------------------------------
 
-    def predict(self, model, data, verbose:bool = True, whole=False):
+    def predict(self, model, data, whole=False, batch_size=-1, n_batches=-1, verbose:bool = True):
         """
-        Calculate prediction and metric for each example in data
+        Calculate prediction for each example in data.
+        The result is a dict whose composition depends on the dict returned by the model's predict_step method.
+        Args:
+            * model - the model that makes the prediction (e.g. trainer.best.score_model)
+            * data - dataset for prediction (its minibatch format should understand the model's predict_step method)
+            * whole - do not process fractional dataset batches
+            * batch_size - minibatch size in examples (it will not change for dataset), if batch_size <= 0, then as in dataset
+            * n_batches - number of minibatches (if n_batches n_batches <= 0, then all)
+            * verbose - display information about the calculation process
         """
         model.train(False)               # режим тестирование
         torch.set_grad_enabled(False)    # вычислительный граф не строим
         data.whole = whole               # обычно по всем примерам (и по дробному батчу)
 
         assert hasattr(model, "predict_step"), "for prediction, the model needs to have method predict_step, witch return output tensor"
+        
+        if batch_size > 0:
+            batch_size_save = data.batch_size
+            data.batch_size = batch_size
 
         scaler = None
         if torch.cuda.is_available() and self.dtype != torch.float32:
             scaler = torch.cuda.amp.GradScaler()
 
-        samples, beg, lst = 0, time.time(), time.time()
-        output_all, scores_all = None, None 
-        for batch_id, batch in enumerate(data):
-            num   = self.samples_in_batch(batch)
+        samples, beg, lst = 0, time.time(), time.time()        
+        res = dict()
+        for batch_id, batch in enumerate(data):            
+            if n_batches > 0 and batch_id + 1 > n_batches:
+                break
 
             if self.transforms.tst is not None:
                 batch = self.transform.tst(batch, batch_id)
@@ -395,31 +410,28 @@ class Trainer:
             else:
                 with torch.autocast(device_type=self.device, dtype=self.dtype):
                     out = model.predict_step(batch, batch_id)                    
-            
-            output, scores = None, None
-            if torch.is_tensor(out):
-                output = out.detach()                
-            elif type(out) is dict:
-                if 'output' in out:                    
-                    assert torch.is_tensor(out['output']), "predict_step should return {'output': tensor}"
-                    output = out['output'].detach()
-                if 'scores' in out:                    
-                    assert torch.is_tensor(out['scores']), "predict_step should return {'scores': tensor}"
-                    scores = out['scores'].detach()
+                        
+            if torch.is_tensor(out):                
+                out = {'output': out.detach()}
 
-            samples += num                      # число просмотренных примеров за эпоху            
-            if output is not None:
-                output_all = output if output_all is None else torch.vstack([output_all, output ])            
-            if scores is not None:
-                scores_all = scores if scores_all is None else torch.vstack([scores_all, scores.detach() ])            
+            for k,v in out.items():
+                assert torch.is_tensor(v), "predict_step should return only tensor or dict of tensors"
+                if k in res:
+                    res[k] = torch.vstack([res[k], v.detach() ])
+                else:
+                    res[k] = v.detach()            
 
             if verbose and (time.time()-lst > 1 or batch_id+1 == len(data) ):
                 lst = time.time()
                 print(f"\r[{100*(batch_id+1)/len(data):3.0f}%]  {(time.time()-beg)/60:.2f}m", end=" ")                
 
-        if output_all is not None: output_all = output_all.cpu()
-        if scores_all is not None: scores_all = scores_all.cpu()
-        return { 'output': output_all, 'scores': scores_all }
+        if verbose:
+            print(f" keys: {list(res.keys())}")
+        if batch_size > 0:
+            data.batch_size = batch_size_save
+        for k in res.keys():
+            res[k] = res[k].cpu()
+        return res
 
     #---------------------------------------------------------------------------
 
@@ -446,29 +458,31 @@ class Trainer:
             * patience             - after how many epochs to stop if there was no better loss, but a better score during this time 
             
         """
-        assert self.optim is not None, "Define the optimizer first"
+        assert self.optim    is not None, "Define the optimizer first"
+        assert self.data.trn is not None, "Define data.trn first"
+
         self.set_optim_schedulers()        
         self.model.to(self.device)
 
-        if self.data_val is not None and hasattr(self.data_val, "reset"):
-            self.data_val.reset()
-        if self.data_trn is not None and hasattr(self.data_trn, "reset"):
-            self.data_trn.reset()
+        if self.data.val is not None and hasattr(self.data.val, "reset"):
+            self.data.val.reset()
+        if hasattr(self.data.trn, "reset"):
+            self.data.trn.reset()
 
-        if pre_val and self.data_val is not None:
-            losses, scores, counts, (samples_val, steps_val, tm_val) = self.fit_epoch(0, self.model, self.data_val, train=False)
+        if pre_val and self.data.val is not None:
+            losses, scores, counts, (samples_val, steps_val, tm_val) = self.fit_epoch(0, self.model, self.data.val, train=False)
             loss_val, score_val = self.mean(losses, scores, counts)            
-            self.add_hist(self.hist.val, self.data_val.batch_size, samples_val, steps_val, tm_val, loss_val, score_val, self.scheduler.get_lr())
+            self.add_hist(self.hist.val, self.data.val.batch_size, samples_val, steps_val, tm_val, loss_val, score_val, self.scheduler.get_lr())
             print()
 
         epochs = epochs or 1_000_000_000
         last_best = 0
         #for epoch in tqdm(range(1, epochs+1)):
         for epoch in range(1, epochs+1):
-            losses, scores, counts, (samples_trn,steps_trn,tm_trn) = self.fit_epoch(epoch, self.model, self.data_trn, train=True)
+            losses, scores, counts, (samples_trn,steps_trn,tm_trn) = self.fit_epoch(epoch, self.model, self.data.trn, train=True)
             loss_trn, score_trn = self.mean(losses, scores, counts)
             lr = self.scheduler.get_lr()
-            self.add_hist(self.hist.trn, self.data_trn.batch_size, samples_trn, steps_trn, tm_trn, loss_trn, score_trn, lr)
+            self.add_hist(self.hist.trn, self.data.trn.batch_size, samples_trn, steps_trn, tm_trn, loss_trn, score_trn, lr)
 
             if self.hist.trn.best.loss is None or self.hist.trn.best.loss > loss_trn:
                 last_best = epoch
@@ -485,10 +499,10 @@ class Trainer:
                 self.hist.trn.best.scores.append((score_trn[0].item(), self.hist.epochs, self.hist.samples, self.hist.steps))
 
             period = period_val_beg if samples_beg and  self.hist['samples'] < samples_beg else period_val
-            if  self.data_val is not None  and (period and epoch % period == 0) or epoch == epochs:
-                losses, scores, counts, (samples_val,steps_val,tm_val) = self.fit_epoch(epoch, self.model, self.data_val, train=False)
+            if  self.data.val is not None  and (period and epoch % period == 0) or epoch == epochs:
+                losses, scores, counts, (samples_val,steps_val,tm_val) = self.fit_epoch(epoch, self.model, self.data.val, train=False)
                 loss_val, score_val = self.mean(losses, scores, counts)
-                self.add_hist(self.hist.val, self.data_val.batch_size, samples_val, steps_val, tm_val, loss_val, score_val, lr)
+                self.add_hist(self.hist.val, self.data.val.batch_size, samples_val, steps_val, tm_val, loss_val, score_val, lr)
 
                 # save best validation loss:
                 if self.hist.val.best.loss is None or self.hist.val.best.loss > loss_val:
@@ -512,9 +526,9 @@ class Trainer:
                     if self.best.copy and 'score' in monitor:
                         self.best.score_model  = copy.deepcopy(self.model)
 
-            if period_plot > 0 and (epoch % period_plot == 0 or epoch == epochs):
-                self.run_progress()        
-                plot_history(self.hist, self.view) 
+            if period_plot > 0 and (epoch % period_plot == 0 or epoch == epochs):                
+                self.plot()  
+                self.stat()               
             
             if callback and period_call and epoch % period_call == 0:                
                 callback()
@@ -528,9 +542,9 @@ class Trainer:
 
             if samples is not None:
                 samples -= samples_trn
-                if samples <= 0:
-                    self.run_progress()        
-                    plot_history(self.hist, self.view) 
+                if samples <= 0:                    
+                    self.plot() 
+                    self.stat()               
                     if callback:
                         callback()
                     break
@@ -539,10 +553,28 @@ class Trainer:
                 print(f"Stop on patience={patience}. Epoch:{epoch}, last best epoch score:{self.hist.val.best.score_epochs}, loss:{self.hist.val.best.loss_epochs}")
                 break
 
+        self.stat()
+        
+    def plot(self):
+        """
+        Plot training history
+        """
+        plot_history(self.hist, self.view)     
+
     #---------------------------------------------------------------------------
 
-    def run_progress(self):
-        print(f"\ntime = (trn:{self.hist.time.trn/60:.2f}, val:{self.hist.time.val/60:.2f}, tot:{(self.hist.time.trn+self.hist.time.val)/60:.2f})m  lr:{self.scheduler.get_lr():.1e}")
+    def stat(self):
+        print()
+        if self.best.score is not None:
+            print(f"valuation score={self.best.score:.6f}, loss={self.best.loss:.6f};  epochs={self.hist.epochs}, samples={self.hist.samples}, steps={self.hist.steps}")        
+        else:
+            print(f"valuation loss={self.best.loss:.6f};  epochs={self.hist.epochs}, samples={self.hist.samples}, steps={self.hist.steps}")        
+
+        t_steps = f"{self.hist.time.trn*1_000/self.hist.steps:.2f}"   if self.hist.steps > 0 else "???"
+        t_sampl = f"{self.hist.time.trn*1_000_000/self.hist.samples:.2f}" if self.hist.samples > 0 else "???"
+        t_epoch = f"{self.hist.time.trn/self.hist.epochs:.2f}" if self.hist.epochs > 0 else "???"
+        print(f"times=(trn:{self.hist.time.trn/60:.2f}, val:{self.hist.time.trn/60:.2f})m,  {t_epoch} s/epoch, {t_steps} s/10^3 steps,  {t_sampl} s/10^6 samples")
+
     #---------------------------------------------------------------------------
             
     def best_score(self, best, score):

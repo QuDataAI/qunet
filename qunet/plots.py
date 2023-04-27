@@ -100,7 +100,8 @@ def subplot_history(sub, val, trn, view, x_min, x_max, c_unit, c_unit_power, uni
         if len(x) != len(y):        
             print(f"Plot warning: {kind}: val {len(x)} != {len(y)}")
             x, y = x[:min(len(x),len(y))], y[:min(len(x),len(y))]
-        ax1.plot(x, y, 'g', linewidth=1.5)
+        lw = 1.5 if len(x) < 100 else (1 if len(x) < 200 else 0.5)        
+        ax1.plot(x, y, 'g', linewidth=lw)
 
     ax1.legend([kind+'_trn',  kind+'_val'], loc='upper left', frameon = False)
     ax1.tick_params(axis='y', colors='darkgreen')

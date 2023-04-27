@@ -186,7 +186,7 @@ trainer.view = Config(
         ticks = None,          # how many labels on the y-axis
         lr    = True,          # show learning rate
         labels= True,          # show labels (training events)                
-        trn_checks = True,     # show the achievement of the minimum training loss (dots)
+        trn_checks = False,    # show the achievement of the minimum training loss (dots)
         val_checks = True      # show the achievement of the minimum validation loss (dots)
     ),            
     score = Config(                                
@@ -196,7 +196,7 @@ trainer.view = Config(
         ticks = None,          # how many labels on the y-axis
         lr    = True,          # show learning rate                
         labels = True,         # show labels (training events)
-        trn_checks = True,     # show the achievement of the optimum training score (dots)
+        trn_checks = False,    # show the achievement of the optimum training score (dots)
         val_checks = True      # show the achievement of the optimum validation score (dots)
     ),
 )
