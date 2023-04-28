@@ -252,16 +252,16 @@ An example of using schedulers can be found in:
 
 <hr>
 
-
 ## Best Model and Checkpoints
 
 Trainer can store the best models in memory or on disk.
 Small models are convenient to keep in memory. 
 When the best validation loss or score is reached, a copy of the model is made. 
 To do this, you need to enable `train.best.copy` and specify the target value for which you want to remember the model in the `monitor` list:
-```
-trainer.best.copy = True
-trainer.fit(monitor=['score', 'loss'])
+```python
+trainer.best(copy=True)
+trainer.fit(epochs=200, monitor=['score'])
+trainer.save("best_score.pt", trainer.best.score_model)
 ```
 The last best model will be in `trainer.best.loss_model` and `trainer.best.score_model`.
 The values of the corresponding metrics are in `trainer.best.loss` and `trainer.best.score`.
@@ -269,11 +269,15 @@ These models can be used to roll back if something went wrong:
 ```python
 trainer.model = copy.deepcopy(trainer.best.score_model)   
 ```
-To save the best models by loss and/or score on disk, you need to set folders:
+To save the best models by loss and/or score on disk, you need to set folders.
+Saving will occur if you specify `monitor` in `fit`:
 ```python
 trainer.folders(loss='log/loss', score='log/loss',  points='log/checkpoints')
+trainer.fit(epochs=200, monitor=['score', 'loss', 'points'], period_points=10)
 ```
-Saving will occur if you specify `monitor=['score', 'loss', 'points']` in `fit`
+The best model by score and loss will be saved each time a new best value is reached.
+Checkpoints (`points`) are simply saving the current state of the model.
+They can be done with the desired periodicity in epochs (period_points=1 by default).
 
 The best score is the metric of the first element in the score.
 If `trainer.score_max=True`, then the higher the score, the better (for example, accuracy).

@@ -579,9 +579,9 @@ class Trainer:
         if newline:
             print()
         if self.hist.val.best.score is not None:
-            print(f"valuation score={self.hist.val.best.score:.6f}, loss={self.hist.val.best.loss:.6f};  epochs={self.hist.epochs}, samples={self.hist.samples}, steps={self.hist.steps}")        
+            print(f"validation score={self.hist.val.best.score:.6f}, loss={self.hist.val.best.loss:.6f};  epochs={self.hist.epochs}, samples={self.hist.samples}, steps={self.hist.steps}")        
         elif self.hist.trn.best.score is not None:
-            print(f"valuation loss={self.hist.val.best.loss:.6f};  epochs={self.hist.epochs}, samples={self.hist.samples}, steps={self.hist.steps}")        
+            print(f"validation loss={self.hist.val.best.loss:.6f};  epochs={self.hist.epochs}, samples={self.hist.samples}, steps={self.hist.steps}")        
 
         t_steps = f"{self.hist.time.trn*1_000/self.hist.steps:.2f}"   if self.hist.steps > 0 else "???"
         t_sampl = f"{self.hist.time.trn*1_000_000/self.hist.samples:.2f}" if self.hist.samples > 0 else "???"
