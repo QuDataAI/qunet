@@ -93,8 +93,8 @@ One Transformer Block (it is all you need)
 Args:         
 
 * `E:int` -  tokens embedding dim
-* `H:int` - number of heads E % H == 0 !            
-* `drop=0` - dropout in attention and mlp
+* `H:int` - number of heads  in attention (E % H == 0 !)            
+* `drop=0` - dropout after attention and after hidden layer in  mlp
 * `res=1` - kind of skip-connections (0: none, 1: usial, 2: train one for all E, 3: train for each E)
 * `casual=False` - kind of casual attention mask (True: GPT, False: Bert)
 
@@ -108,9 +108,9 @@ Transformer is all you need
 Args:         
 
 * `E:int` - tokens embedding dim
-* `H=1` - number of heads E % H == 0 !
+* `H=1` - number of heads in attention (E % H == 0  !)
 * `n_blocks=1` - number of transformer blocks
-* `drop=0` - dropout in attention and mlp
+* `drop=0` - dropout after attention and after hidden layer in  mlp
 * `res=1` - kind of skip-connections (0: none, 1: usial, 2: train one for all E, 3: train for each E)
 * `casual=False` - kind of casual attention mask (True: GPT, False: Bert)
 
