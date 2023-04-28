@@ -11,7 +11,7 @@ def plot_histogram( x, x_sub, pref="", digits=1, w=12, h=3, bins=50, bins_sub=10
     """
     r = lambda x: '{x:.{digits}f}'.format(x=round(x,digits), digits=digits)
     plt.figure(figsize=(w,h), facecolor ='w')         
-    plt.suptitle(f"{pref}median={r(x.median())}; mean={r(x.mean())} ± {r(x.std())}  [min,max]=[{r(x.min())}, {r(x.max())}]; cnt={len(x)} ({100*len(x_sub)/len(x):.0f}%)", fontsize=14)
+    plt.suptitle(f"{pref}median={r(np.median(x))}; mean={r(x.mean())} ± {r(x.std())}  [min,max]=[{r(x.min())}, {r(x.max())}]; cnt={len(x)} ({100*len(x_sub)/len(x):.0f}%)", fontsize=14)
     plt.subplot(1,2,1)
     plt.hist(x, bins=bins, log=True, color="lightblue", ec="black");  plt.grid(ls=":",alpha=1); plt.ylabel("log10(N)")
     plt.subplot(1,2,2)
@@ -115,12 +115,16 @@ def subplot_history(sub, val, trn, view, x_min, x_max, c_unit, c_unit_power, uni
 
     checks = trn.best.losses if kind=='loss' else trn.best.scores
     if view.trn_checks:        
+        if view.last_checks > 0:
+            checks = checks[-view.last_checks :]
         for c in checks:            
             x = lb[2]/c_unit if unit=='sample' else c[1]               
             ax1.scatter(x, c[0],  s=3, c='darkblue', edgecolors='black', linewidths=0.5)                                
 
     checks = val.best.losses if kind=='loss' else val.best.scores
     if view.val_checks:        
+        if view.last_checks > 0:
+            checks = checks[-view.last_checks :]
         for c in checks:            
             x = lb[2]/c_unit if unit=='sample' else c[1]               
             ax1.scatter(x, c[0], s=7, c='g', edgecolors='black', linewidths=0.5)                                

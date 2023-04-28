@@ -1,3 +1,27 @@
+import copy, time, gc, psutil
+
+class Info:
+    def __init__(self) -> None:
+        self.beg  = time.time()
+        self.last = time.time()
+
+    def info(self, text, pref="", end="\n"):
+        """ 
+        Information about the progress of calculations (time and memory) 
+        """
+        gc.collect()
+        ram, t = psutil.virtual_memory().used / 1024**3,  time.time()    
+        print(f"{pref}{(t-self.beg)/60:5.1f}m[{t-self.last:+5.1f}s] {ram:6.3f}Gb | {text}",end=end)
+        self.last = time.time(); 
+
+    def reset(self):
+        self.beg  = time.time()
+        self.last = time.time()
+
+    def __call__(self, text, pref="", end="\n"):
+        self.info(text, pref="", end="\n")
+
+#===============================================================================
 
 class Config:
     def __init__(self, *args, **kvargs):
@@ -22,6 +46,9 @@ class Config:
 
     def __str__(self):
         return self.get()
+
+    def copy(self):
+        return copy.deepcopy(self)
 
     def protect(self, check=True):
         """ check=True - protected version (checks for the presence of a variable), otherwise no """
@@ -70,9 +97,15 @@ class Config:
 
 
 if __name__ == '__main__':    
+    info = Info()
+    info("begin")
 
     cfg1 = Config(x=1, y=2)
     cfg2 = Config(cfg1, z=3)
+    print(cfg2)
+
+    cfg1 = cfg2.copy()
+    cfg1.z=8
     print(cfg2)
 
     if False:

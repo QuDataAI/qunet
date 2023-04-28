@@ -80,9 +80,9 @@ from qunet import Data
 X1, X2 = torch.rand(1000,3), torch.rand(1000,3,20)
 Y = X1 * torch.sigmoid(X2).mean(-1)
 
-data_trn = Data( dataset=( (X1,X2), Y ), batch_size=100)  
+data_trn = Data( dataset=( X1, X2, Y ), batch_size=100)  
  
-for (x1,x2), y in data_trn:
+for x1,x2, y in data_trn:
     print(x1.shape, x2.shape, y.shape)  # (100,3) (100,3,20) (100,3)
 ```        
 All tensors in the dataset are assumed to have the same length (by first index).

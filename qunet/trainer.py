@@ -1,12 +1,13 @@
-﻿import os, math, copy, time, datetime, pathlib
+﻿import os, math, copy, time, datetime
+from pathlib import Path
 from   tqdm.auto import tqdm
 import numpy as np, matplotlib.pyplot as plt
 import torch, torch.nn as nn
 
 from .utils   import Config
+from .batch   import Batch
 from .optim   import Scheduler
 from .plots   import plot_history
-
 
 class Trainer:
     """
@@ -63,7 +64,7 @@ class Trainer:
             ),
 
             x_min = 0,                 # minimum value in samples on the x-axis (if < 0 last x_min samples)
-            x_max = None,              # maximum value in samples on the x-axis (if None - last)
+            x_max = None,              # maximum value in samples on the x-axis (if None - last)            
 
             loss = Config(                                
                 show  = True,          # show loss subplot
@@ -73,7 +74,8 @@ class Trainer:
                 lr    = True,          # show learning rate
                 labels= True,          # show labels (training events)                
                 trn_checks = False,     # show the achievement of the minimum training loss (dots)
-                val_checks = True      # show the achievement of the minimum validation loss (dots)
+                val_checks = True,     # show the achievement of the minimum validation loss (dots)
+                last_checks = 100          # how many last best points to display (if -1 then all)
             ),            
             score = Config(                                
                 show  = True,          # show score subplot    
@@ -82,8 +84,9 @@ class Trainer:
                 ticks = None,          # how many labels on the y-axis
                 lr    = True,          # show learning rate                
                 labels = True,         # show labels (training events)
-                trn_checks = False,     # show the achievement of the optimum training score (dots)                
-                val_checks = True      # show the achievement of the optimum validation score (dots)                
+                trn_checks = False,    # show the achievement of the optimum training score (dots)                
+                val_checks = True,     # show the achievement of the optimum validation score (dots)                
+                last_checks = 100      # how many last best points to display (if -1 then all)
             ),
         )
 
@@ -197,7 +200,7 @@ class Trainer:
 
     def to_device(self, batch):
         """ send mini-batch to device """        
-        if torch.is_tensor(batch):
+        if torch.is_tensor(batch) or Batch in batch.__class__.__bases__:
             return batch.to(self.device)
         batch = list(batch)        
         for i in range(len(batch)):
@@ -243,6 +246,8 @@ class Trainer:
             return len(batch)
         if type(batch) is list or type(batch) is tuple:
             return self.samples_in_batch(batch[0]) 
+        if Batch in batch.__class__.__bases__:
+            return len(batch)        
         assert False, "wrong type of the fist element in batch"
     #---------------------------------------------------------------------------
 
@@ -417,9 +422,11 @@ class Trainer:
             for k,v in out.items():
                 assert torch.is_tensor(v), "predict_step should return only tensor or dict of tensors"
                 if k in res:
-                    res[k] = torch.vstack([res[k], v.detach() ])
+                    if v.ndim == 1:  res[k] = torch.vstack([res[k], v.view(-1,1).detach() ])
+                    else:            res[k] = torch.vstack([res[k], v.detach() ])
                 else:
-                    res[k] = v.detach()            
+                    if v.ndim == 1:  res[k] = v.view(-1,1).detach()            
+                    else:            res[k] = v.detach()       
 
             if verbose and (time.time()-lst > 1 or batch_id+1 == len(data) ):
                 lst = time.time()
@@ -512,7 +519,7 @@ class Trainer:
                     self.hist.val.best.loss_samples = self.hist.samples                    
                     self.hist.val.best.losses.append((loss_val, self.hist.epochs, self.hist.samples, self.hist.steps))
                     if self.folders.loss and 'loss' in monitor:
-                        self.save(folder=self.folders.loss, fname=f"loss_{loss_val:.4f}_{self.now()}.pt", model=self.model, optim=self.optim)
+                        self.save(Path(self.folders.loss) / Path(f"loss_{loss_val:.4f}_{self.now()}.pt"), model=self.model, optim=self.optim)
                     if self.best.copy and 'loss' in monitor:
                         self.best.loss_models  = copy.deepcopy(self.model)
                 
@@ -522,7 +529,7 @@ class Trainer:
                     self.hist.val.best.score_samples = self.hist.samples                    
                     self.hist.val.best.scores.append( ( score_val[0].item(), self.hist.epochs, self.hist.samples, self.hist.steps) )
                     if self.folders.score and 'score' in monitor:                        
-                        self.save(folder=self.folders.score, fname=f"score_{score_val[0]:.4f}_{self.now()}.pt", model=self.model, optim=self.optim)
+                        self.save(Path(self.folders.score) / Path(f"score_{score_val[0]:.4f}_{self.now()}.pt"), model=self.model, optim=self.optim)
                     if self.best.copy and 'score' in monitor:
                         self.best.score_model  = copy.deepcopy(self.model)
 
@@ -536,7 +543,7 @@ class Trainer:
             if self.folders.points and 'points' in monitor and (epoch % period_points == 0 or epoch == epochs):
                 score_val = score_val or [0]
                 score_trn = score_trn or [0]
-                self.save(folder=self.folders.points, fname=f"points_{self.now()}_score_val_{score_val[0]:.4f}_trn_{score_trn[0]:.4f}_loss_val_{loss_val}_trn_{loss_trn}.pt", model=self.model, optim=self.optim)
+                self.save(Path(self.folders.points) / Path(f"points_{self.now()}_score_val_{score_val[0]:.4f}_trn_{score_trn[0]:.4f}_loss_val_{loss_val}_trn_{loss_trn}.pt"), model=self.model, optim=self.optim)
 
             self.step_schedulers(1, samples_trn)
 
@@ -550,30 +557,36 @@ class Trainer:
                     break
 
             if patience is not None and patience > 0 and  epoch - last_best > patience:
-                print(f"Stop on patience={patience}. Epoch:{epoch}, last best epoch score:{self.hist.val.best.score_epochs}, loss:{self.hist.val.best.loss_epochs}")
+                print(f"\n!!! Stop on patience={patience}. Epoch:{epoch}, last best score epoch:{self.hist.val.best.score_epochs}, best loss epoch:{self.hist.val.best.loss_epochs}")
                 break
 
-        self.stat()
-        
-    def plot(self):
-        """
-        Plot training history
-        """
-        plot_history(self.hist, self.view)     
+        if period_plot <= 0:
+            self.stat()
 
     #---------------------------------------------------------------------------
 
-    def stat(self):
-        print()
-        if self.best.score is not None:
-            print(f"valuation score={self.best.score:.6f}, loss={self.best.loss:.6f};  epochs={self.hist.epochs}, samples={self.hist.samples}, steps={self.hist.steps}")        
-        else:
-            print(f"valuation loss={self.best.loss:.6f};  epochs={self.hist.epochs}, samples={self.hist.samples}, steps={self.hist.steps}")        
+    def plot(self, view=None, hist=None):
+        """
+        Plot training history
+        """        
+        view = view or self.view
+        hist = hist or self.hist
+        plot_history(hist, view)     
+
+    #---------------------------------------------------------------------------
+
+    def stat(self, newline=True):
+        if newline:
+            print()
+        if self.hist.val.best.score is not None:
+            print(f"valuation score={self.hist.val.best.score:.6f}, loss={self.hist.val.best.loss:.6f};  epochs={self.hist.epochs}, samples={self.hist.samples}, steps={self.hist.steps}")        
+        elif self.hist.trn.best.score is not None:
+            print(f"valuation loss={self.hist.val.best.loss:.6f};  epochs={self.hist.epochs}, samples={self.hist.samples}, steps={self.hist.steps}")        
 
         t_steps = f"{self.hist.time.trn*1_000/self.hist.steps:.2f}"   if self.hist.steps > 0 else "???"
         t_sampl = f"{self.hist.time.trn*1_000_000/self.hist.samples:.2f}" if self.hist.samples > 0 else "???"
         t_epoch = f"{self.hist.time.trn/self.hist.epochs:.2f}" if self.hist.epochs > 0 else "???"
-        print(f"times=(trn:{self.hist.time.trn/60:.2f}, val:{self.hist.time.trn/60:.2f})m,  {t_epoch} s/epoch, {t_steps} s/10^3 steps,  {t_sampl} s/10^6 samples")
+        print(f"times=(trn:{self.hist.time.trn/60:.2f}, val:{self.hist.time.val/60:.2f})m,  {t_epoch} s/epoch, {t_steps} s/10^3 steps,  {t_sampl} s/10^6 samples")
 
     #---------------------------------------------------------------------------
             
@@ -605,19 +618,55 @@ class Trainer:
 
     #---------------------------------------------------------------------------
 
-    def save(self, folder, fname, model = None, optim=None, info=""):
-        model = model or self.model
-        cfg = model.cfg
-        fname = pathlib.Path(folder)  / pathlib.Path(fname)
-        fname.parent.mkdir(parents=True, exist_ok=True)
-        state = {
-            'info':            info,
-            'date':            datetime.datetime.now(),   # дата и время
-            'config':          cfg,                       # конфигурация модели
-            'model' :          model.state_dict(),        # параметры модели
-            'optimizer':       optim.state_dict() if optim is not None else None,
-            'hist':            self.hist,
-            'view':            self.view,
-        }
-        torch.save(state, fname)
+    def save(self, fname, model = None, optim=None, info=""):
+        try:
+            model = model or self.model        
+            cfg = model.cfg if hasattr(model, "cfg") else Config()        
+            Path(fname).parent.mkdir(parents=True, exist_ok=True)
+            state = {
+                'info':            info,
+                'date':            datetime.datetime.now(),   # дата и время
+                'config':          cfg,                       # конфигурация модели
+                'model' :          model.state_dict(),        # параметры модели
+                'optimizer':       optim.state_dict() if optim is not None else None,
+                'hist':            self.hist,
+                'view':            self.view,
+            }
+            torch.save(state, fname)
+        except:
+            print(f"Something  wrong in the function trainer.save fname: '{fname}'")
 
+    #---------------------------------------------------------------------------
+
+    def load(self, fname, ClassModel, load_optimizer=False, copy_history=False, copy_view=False):
+        try:
+            state = torch.load(fname, map_location='cpu')
+        except:
+            print(f"Cannot open file: '{fname}'")
+            return None
+
+        try:
+            assert type(state) == dict,  f"Apparently this model was not saved by the trainer: state:{type(state)}"
+            assert 'model'  in state,    f"Apparently this model was not saved by the trainer: no 'model' in state: {list(state.keys())}"
+            assert 'config' in state,    f"Apparently this model was not saved by the trainer: no 'config' in state: {list(state.keys())}"
+            model = ClassModel(state['config'])
+            model.load_state_dict(state['model'])
+            if load_optimizer and self.optim is not None and 'optimizer' in state:
+                self.optim.load_state_dict(state)
+
+            state['view'] = self.view.copy()(state['view'])  # для совместимости с новыми версиями
+            state['hist'] = self.hist.copy()(state['hist'])  # если что-то потом было добавлено
+
+            if copy_history:
+                self.hist = state['hist']
+            if copy_view:
+                self.view = state['view']
+
+            print(f"info: {state['info']}")
+            print(f"date: {state['date']}")            
+            self.stat(newline=False)
+            del state['model']
+            return model, state
+        except:
+            print(f"Something  wrong in the function trainer.load fname: '{fname}'")
+            return None
