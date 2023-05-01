@@ -11,15 +11,17 @@ class Info:
         """
         gc.collect()
         ram, t = psutil.virtual_memory().used / 1024**3,  time.time()    
-        print(f"{pref}{(t-self.beg)/60:5.1f}m[{t-self.last:+5.1f}s] {ram:6.3f}Gb | {text}",end=end)
+        print(f"{pref}{(t-self.beg)/60:6.1f}m[{t-self.last:+6.1f}s] {ram:6.3f}Gb | {text}", end = end)
         self.last = time.time(); 
+        return self
 
     def reset(self):
         self.beg  = time.time()
         self.last = time.time()
+        return self
 
     def __call__(self, text, pref="", end="\n"):
-        self.info(text, pref="", end="\n")
+        return self.info(text, pref="", end="\n")
 
 #===============================================================================
 
@@ -45,7 +47,7 @@ class Config:
         return self.set(*args, **kvargs)
 
     def __str__(self):
-        return self.get()
+        return self.get_str()
 
     def copy(self):
         return copy.deepcopy(self)
@@ -81,13 +83,13 @@ class Config:
             elif not k.startswith("__") and k != 'check_variable_existence':
                 self.__dict__[k] = v
 
-    def get(self, end=", ", exclude=[]):
+    def get_str(self, end=", ", exclude=[]):
         """ output of config parameters """
         res = ""
         for k,v in self.__dict__.items():
             if not k.startswith("__") and k not in ["check_variable_existence"] + exclude:
                 if isinstance(v, Config):
-                    res += f"{k}:"+" {"+v.get()+"}"+end
+                    res += f"{k}:"+" {"+v.get_str()+"}"+end
                 else:
                     if type(v) == str:
                         res +=  f"{k}:'{v}'{end}"

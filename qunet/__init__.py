@@ -3,6 +3,7 @@ from .data                import *
 from .trainer             import *
 from .optim               import *
 from .plots               import *
+from .callback            import *
 
 from .modules.mlp         import *
 from .modules.cnn         import *

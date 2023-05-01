@@ -138,8 +138,7 @@ They will be discussed in the relevant sections. Model training starts after run
 trainer.fit(epochs=None,   samples=None,            
             pre_val=False, period_val=1, period_plot=100,         
             period_checks=1, period_val_beg = 4, samples_beg = None,
-            monitor=[], patience=None,
-            period_call:, callback = None):     
+            monitor=[], patience=None ):     
 ```
 
 * `epochs`         - number of epochs for training (passes of one data_trn pack). If not defined (None) works "infinitely".
@@ -147,8 +146,6 @@ trainer.fit(epochs=None,   samples=None,
 * `pre_val`        - validate model before starting training
 * `period_val`     - the period with which the validation model runs (in epochs)
 * `period_plot`    - the period with which the training plot is displayed  (in epochs)
-* `period_call`    - callback custom function
-* `callback`       - custom function called with `period_call`
 * `period_points`  - the period with which the checkpoints are made and the current model is saved (in epochs)
 * `period_val_beg` - the period with which the validation model runs on the first `samples_beg` samples. Used when validation needs to be done less frequently at the start of training.
 * `samples_beg`   -  the number of samples from the start, after which the validation period will be equal to `period_val`

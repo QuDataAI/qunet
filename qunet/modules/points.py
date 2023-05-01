@@ -24,7 +24,7 @@ class  PointsBlock(nn.Module):
 
     def create(self):
         cfg = self.cfg
-        assert cfg.mean or cfg.max, f"PointsBlock need mean or/and max, cfg={cfg.get()}"
+        assert cfg.mean or cfg.max, f"PointsBlock need mean or/and max, cfg={cfg.get_str()}"
         self.cfg.mlp1(input = cfg.E, output = cfg.E)
         self.cfg.mlp2(input = cfg.E, output = cfg.E)
 

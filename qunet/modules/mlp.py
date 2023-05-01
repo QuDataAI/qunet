@@ -21,7 +21,7 @@ class MLP(nn.Module):
         If there is more than one layer - cfg['hidden'] is a list with a list of the number of neurons in each layer
         There may be no hidden layer: hidden == 0 or == [] or stretch == 0,
         then it's a normal input -> output line layer with no activation function
-            
+
         Example:
         ```
             mlp = MLP(input=32, stretch=4, output=1)
@@ -29,9 +29,9 @@ class MLP(nn.Module):
         ```
         Can be created from config:
         ```
-            cfg = MLP.default()         
-            cfg(input = 3, output = 1)  
-            mlp = MLP(cfg)              
+            cfg = MLP.default()
+            cfg(input = 3, output = 1)
+            mlp = MLP(cfg)
         ```
         And also from the config and arguments:
         ```
@@ -59,7 +59,7 @@ class MLP(nn.Module):
 
     def prepare(self):
         cfg=self.cfg
-        assert cfg.input is not None  and cfg.output is not None,  f'MLP: wrong input/output: {cfg.get()}'
+        assert cfg.input is not None  and cfg.output is not None,  f'MLP: wrong input/output: {cfg.get_str()}'
 
         if type(cfg.hidden) is list:
             self.neurons = [cfg.input] + cfg.hidden + [cfg.output]
@@ -68,7 +68,7 @@ class MLP(nn.Module):
                 cfg.hidden = int(cfg.stretch * cfg.input)
 
             if cfg.hidden is None or cfg.hidden <= 0:
-                self.neurons = [cfg.input, cfg.output]                
+                self.neurons = [cfg.input, cfg.output]
             else:
                 self.neurons = [cfg.input, cfg.hidden, cfg.output]
 
@@ -85,7 +85,7 @@ class MLP(nn.Module):
                 if   self.cfg.fun == 'gelu':    seq += [ nn.GELU() ]
                 elif self.cfg.fun == 'relu':    seq += [ nn.ReLU() ]
                 elif self.cfg.fun == 'sigmoid': seq += [ nn.Sigmoid() ]
-                elif self.cfg.fun == 'tanh':    seq += [ nn.Tanh() ]                
+                elif self.cfg.fun == 'tanh':    seq += [ nn.Tanh() ]
                 seq += [ nn.Dropout(self.cfg.drop) ]
         self.layers = nn.Sequential(*seq)
 

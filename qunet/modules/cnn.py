@@ -15,7 +15,7 @@ class CNN(nn.Module):
         The remaining parameters are specified either as lists (for each layer) or as numbers (then they will be the same in each layer).
 
         Args:
-            * `input= None`:  input tensor shape:: (channels, height, width)            
+            * `input= None`:  input tensor shape:: (channels, height, width)
             * `channel:list`:  number of channels in each layer
             * `kernel  = 3`:   int or list: size of the convolutional kernel
             * `stride   = 1`:  int or list: stride of the convolutional kernel
@@ -23,7 +23,7 @@ class CNN(nn.Module):
             * `pool_ker = 2`:  int or list: max-pooling kernel
             * `pool_str = 2`:  int or list: stride of max-pooling kernel
             * `drop     = 0`:  int or list: dropout after each layer
-        
+
         Example:
         ```
             cnn = CNN(input=(3,32,32), channel=[16,32], kernel=3, pool_ker=[0,2])
@@ -51,7 +51,7 @@ class CNN(nn.Module):
         x = self.layers(x)
         return x
 
-    def prepare(self):        
+    def prepare(self):
         cfg = self.cfg
         assert type(cfg.input) == tuple, "CNN: You must define input shape of image (C,H,W)"
         if type(cfg.channel) == int:
@@ -65,7 +65,7 @@ class CNN(nn.Module):
         if type(cfg.padding)  == int:   cfg.padding  = [cfg.padding] * n
         if type(cfg.pool_ker) == int:   cfg.pool_ker = [cfg.pool_ker]* n
         if type(cfg.pool_str) == int:   cfg.pool_str = [cfg.pool_str]* n
-        if type(cfg.drop)     == float or type(cfg.drop)==int: cfg.drop=[cfg.drop]*n        
+        if type(cfg.drop)     == float or type(cfg.drop)==int: cfg.drop=[cfg.drop]*n
 
     def create(self):
         self.prepare()
@@ -87,7 +87,7 @@ class CNN(nn.Module):
                 layers += [ nn.MaxPool2d(kernel_size=pool_ker, stride=pool_str) ]
                 h = int( (h - pool_ker) / pool_str + 1)
                 w = int( (w - pool_ker) / pool_str + 1)
-            
+
             layers += [ nn.Dropout(p=self.cfg.drop[i]) ]
 
         self.cfg.output =  (channels[-1], w, h)
