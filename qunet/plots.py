@@ -70,13 +70,13 @@ def subplot_history(sub, val, trn, view, x_min, x_max, c_unit, c_unit_power, uni
         best_loss  = f"{val.best.loss:.4f}"    if val.best.loss is not None  else "?"
         loss_val   = f"{val.losses[-1]:.4f}"   if len(val.losses)  else "?"
         loss_trn   = f"{trn.losses[-1]:.4f}"   if len(trn.losses)  else "?"
-        plt.title(f"loss = (min: {best_loss}, val: {loss_val}, trn: {loss_trn})")
+        plt.title(f"loss = (min: {best_loss} [{val.best.score_epochs}], val: {loss_val}, trn: {loss_trn})", fontsize=12, pad=-2)
 
     if kind == 'score':
         best_score = f"{val.best.score:.4f}"   if val.best.score is not None else "?"
         score_val  = f"{val.scores[-1]:.4f}"   if len(val.scores) else "?"
         score_trn  = f"{trn.scores[-1]:.4f}"   if len(trn.scores) else "?"
-        plt.title(f"score = (bst: {best_score}, val: {score_val},  trn: {score_trn})")
+        plt.title(f"score = (bst: {best_score} [{val.best.loss_epochs}], val: {score_val},  trn: {score_trn})", fontsize=12, pad=-2)
 
     y_min, y_max = view.y_min, view.y_max
     ax1.set_xlabel(fr"$10^{c_unit_power:.0f}$ samples" if unit=='samples' else 'epochs'); ax1.set_ylabel(kind);                     
@@ -118,7 +118,7 @@ def subplot_history(sub, val, trn, view, x_min, x_max, c_unit, c_unit_power, uni
         if view.last_checks > 0:
             checks = checks[-view.last_checks :]
         for c in checks:            
-            x = lb[2]/c_unit if unit=='sample' else c[1]               
+            x = c[2]/c_unit if unit=='sample' else c[1]               
             ax1.scatter(x, c[0],  s=3, c='darkblue', edgecolors='black', linewidths=0.5)                                
 
     checks = val.best.losses if kind=='loss' else val.best.scores
@@ -126,7 +126,7 @@ def subplot_history(sub, val, trn, view, x_min, x_max, c_unit, c_unit_power, uni
         if view.last_checks > 0:
             checks = checks[-view.last_checks :]
         for c in checks:            
-            x = lb[2]/c_unit if unit=='sample' else c[1]               
+            x = c[2]/c_unit if unit=='sample' else c[1]               
             ax1.scatter(x, c[0], s=7, c='g', edgecolors='black', linewidths=0.5)                                
 
     if view.lr and len(trn.samples):

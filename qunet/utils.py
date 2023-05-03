@@ -21,7 +21,7 @@ class Info:
         return self
 
     def __call__(self, text, pref="", end="\n"):
-        return self.info(text, pref="", end="\n")
+        self.info(text, pref=pref, end=end)
 
 #===============================================================================
 
@@ -80,14 +80,14 @@ class Config:
                 if k not in self.__dict__:
                     self.__dict__[k] = Config()
                 self.__dict__[k].set_cfg(v)
-            elif not k.startswith("__") and k != 'check_variable_existence':
+            elif not k.startswith("__") and k not in ['check_variable_existence', 'set']:
                 self.__dict__[k] = v
 
     def get_str(self, end=", ", exclude=[]):
         """ output of config parameters """
         res = ""
         for k,v in self.__dict__.items():
-            if not k.startswith("__") and k not in ["check_variable_existence"] + exclude:
+            if not k.startswith("__") and k not in ["check_variable_existence", "set"] + exclude:
                 if isinstance(v, Config):
                     res += f"{k}:"+" {"+v.get_str()+"}"+end
                 else:
@@ -97,6 +97,16 @@ class Config:
                         res +=  f"{k}:{v}{end}"
         return res
 
+    def get_dict(self, exclude=[]):
+        """ output of config parameters """
+        res = {}
+        for k,v in self.__dict__.items():
+            if not k.startswith("__") and k not in ["check_variable_existence"] + exclude:
+                if isinstance(v, Config):
+                    res[k] = v.get_dict()
+                else:
+                    res[k] = v
+        return res
 
 if __name__ == '__main__':    
     info = Info()
@@ -109,6 +119,8 @@ if __name__ == '__main__':
     cfg1 = cfg2.copy()
     cfg1.z=8
     print(cfg2)
+
+    print(cfg2.get_dict())
 
     if False:
         cfg = Config(x=2, y=5, z=Config(v=0))

@@ -5,7 +5,7 @@ class Data:
     """
     Data class. Its iterator gives out data in batches of batch_size examples in each.
     """
-    def __init__(self, dataset, shuffle=False, batch_size=64,  whole_batch=False, n_packs=1, n_batches=-1) -> None:
+    def __init__(self, dataset=None, shuffle=False, batch_size=64,  whole_batch=False, n_packs=1, n_batches=-1) -> None:
         """
         Data class. Its iterator gives out data in batches of batch_size examples in each.
 
@@ -33,18 +33,18 @@ class Data:
             print(x.shape, y.shape)
         ```
         """
-        assert torch.is_tensor(dataset) or type(dataset) is list or type(dataset) is tuple, f"dataset = tensor or  list (tuple) of tensors; got: {type(dataset)}"
+        assert dataset is None or torch.is_tensor(dataset) or type(dataset) is list or type(dataset) is tuple, f"dataset = tensor or  list (tuple) of tensors; got: {type(dataset)}"
 
         self.data = self.set_data(dataset)
         self.check_data(self.data)
 
-        self.shuffle    = shuffle      # перемешивать или нет данные
-        self.batch_size = batch_size   # размер минибатча
-        self.start = 0                 # индекс начала текущего батча
-        self.n_packs = n_packs         # разбить датасет на n_packs паков
-        self.pack_id = 0               # номер текущего пака
-        self.whole_batch = whole_batch # брать только батчи размера batch_size
-        self.n_batches = n_batches     # выдать только n_batches первых батчей
+        self.shuffle     = shuffle      # перемешивать или нет данные
+        self.batch_size  = batch_size   # размер минибатча
+        self.start       = 0            # индекс начала текущего батча
+        self.n_packs     = n_packs      # разбить датасет на n_packs паков
+        self.pack_id     = 0            # номер текущего пака
+        self.whole_batch = whole_batch  # брать только батчи размера batch_size
+        self.n_batches   = n_batches    # выдать только n_batches первых батчей
 
     #---------------------------------------------------------------------------
 
@@ -52,6 +52,9 @@ class Data:
         """
         Dataset will be list of tensors
         """
+        if data is None:
+            return data
+
         if   torch.is_tensor(data) or type(data) is list:  
             return data
         elif type(data) is tuple:
@@ -65,6 +68,9 @@ class Data:
         """ 
         Check data in list of tensors 
         """
+        if data is None:
+            return True
+        
         if torch.is_tensor(data):
             return True
 
@@ -102,6 +108,10 @@ class Data:
         ------------
             data (Data) - an instance of the Data class
         """
+        if self.data is None:
+            self.data = data.data
+            return self
+
         if torch.is_tensor(data.data):
             assert torch.is_tensor(self.data), "Data.add:data is tensor, but current dataset not is tensor"
             self.data = torch.cat([self.data, data.data], dim=0)
@@ -116,14 +126,22 @@ class Data:
 
     def count(self):
         """ Number of samples in the dataset """
+        if self.data is None:
+            return 0
+        
         if torch.is_tensor(self.data):
             return len(self.data)
+        
         return len(self.data[0])
 
     #---------------------------------------------------------------------------
 
     def mix(self, data):
         """ Shuffle data. """
+        if data is None:
+            print("Data warning: data is None in function mix")
+            return data
+
         idx = torch.randperm(  self.count() )
 
         if torch.is_tensor(data):
@@ -132,27 +150,6 @@ class Data:
         for i in range(len(data)):
             data[i] = data[i][idx]
         return data
-
-    #---------------------------------------------------------------------------
-
-    def reload(self, train, epoch, hist, best):
-        """ 
-        Can override the successor, for reload data from disk
-        Called in trainer.fit each period_reload epochs
-
-        Args
-        ------------
-            train (bool):
-                True for training data and False for validation data
-            epoch (int):
-                current epoch number
-            hist  (Config):
-                link to full information about training Trainer.hist
-            best  (Config):
-                link to the best models in memory Trainer.best
-
-        """
-        pass
 
     #---------------------------------------------------------------------------
 
@@ -166,7 +163,7 @@ class Data:
     #---------------------------------------------------------------------------
 
     def get_batch(self, data, s, B):
-        """ Get batch size B starting from sample s. """
+        """ Get batch size B starting from sample s. """        
         if torch.is_tensor(data):
             return data[s: s+B]
         return [ d[s: s+B] for d in data ]
@@ -175,6 +172,8 @@ class Data:
 
     def __next__(self):
         """The iterator to get the next minibatch. """
+        assert self.data is not None, "Data: data is None in iterator"            
+
         if (self.start >= self.count() )                                             \
         or                                                                           \
            (self.whole_batch and self.start + self.batch_size > self.count() )       \
@@ -221,9 +220,9 @@ class Data:
 #===============================================================================
 if __name__ == '__main__':
     X = torch.rand((100,))
-    data = Data(X, batch_size=50)
-    for x in data:
-        print(x)
-        x[:] = 0
-    for x in data:
-        print(x)
+    data1 = Data(X, batch_size=50)
+    data2 = Data()
+    print(data2.count())
+    data2.add(data1)
+    print(data2.count())
+

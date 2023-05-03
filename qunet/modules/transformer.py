@@ -394,11 +394,13 @@ class  Transformer(nn.Module):
                 kind of causal attention mask (True: GPT, False: Bert)
             T_max  (int=2048):
                 maximum number of tokens (needed for causal==True)
-            is_fft  (int=0):
+            is_mix (int=0):
+                will be
+            is_fft (int=0):
                 there is a FFT (FNet) block, can be a list (for each block)
-            is_att  (int=0):
+            is_att  (int=1):
                 there is an attention block, can be a list (for each block)
-            is_mlp  (int=0):
+            is_mlp  (int=1):
                 there is an MLP block, can be a list (for each block)
 
         Example:

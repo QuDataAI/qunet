@@ -15,7 +15,7 @@ class Trainer:
     Generic model training class.
     Any method can, of course, be overridden by inheritance or by an instance.
     """
-    def __init__(self, model, data_trn=None, data_val=None, callbacks=[], score_max=False) -> None:
+    def __init__(self, model, data_trn=None, data_val=None, callbacks=[], score_max=True) -> None:
         """
         Trainer 
 
@@ -370,7 +370,7 @@ class Trainer:
         st += f"loss={loss:.4f} "
 
         t_unit, t_unit_scale,  c_unit, c_unit_power = self.unit_scales()
-        print(f"\r{epoch:3d}{'t' if train else 'v'}[{100*done:3.0f}%]  {st}  samples={samples} steps={steps}  time={(0.0 if steps==0 else 1e3*tm/(t_unit_scale*steps)):.3}{t_unit}/step  {c_unit*tm/(t_unit_scale*samples):.2f}{t_unit}/10^{c_unit_power:.0f}", end="                ")
+        print(f"\r{epoch:3d}{'t' if train else 'v'}[{100*done:3.0f}%]  {st}", end="          ")
 
     #---------------------------------------------------------------------------
 
@@ -593,10 +593,11 @@ class Trainer:
                     callback.on_validation_epoch_end(self, self.model)
 
             if period_plot > 0 and (epoch % period_plot == 0 or epoch == epochs):
-                self.plot()
+                if len(self.hist.trn.epochs) > 1:
+                    self.plot()
+                    for callback in self.callbacks:
+                        callback.on_after_plot(self, self.model)
                 self.stat()
-                for callback in self.callbacks:
-                    callback.on_after_plot(self, self.model)
 
             if self.folders.points and 'points' in monitor and (epoch % period_points == 0 or epoch == epochs):
                 for callback in self.callbacks:
@@ -619,6 +620,11 @@ class Trainer:
 
             if patience is not None and patience > 0 and  epoch - last_best > patience:
                 print(f"\n!!! Stop on patience={patience}. Epoch:{epoch}, last best score epoch:{self.hist.val.best.score_epochs}, best loss epoch:{self.hist.val.best.loss_epochs}")
+                if period_plot > 0 and len(self.hist.trn.epochs) > 1:                
+                    self.plot()
+                    for callback in self.callbacks:
+                        callback.on_after_plot(self, self.model)
+                    self.stat()                
                 break
 
         if period_plot <= 0:
