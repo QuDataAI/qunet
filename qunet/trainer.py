@@ -148,7 +148,8 @@ class Trainer:
 
             params = 0
         )
-        self.hist.params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        if model is not None:
+            self.hist.params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     #---------------------------------------------------------------------------
 
@@ -291,10 +292,13 @@ class Trainer:
         for batch_id, batch in enumerate(data):
             num   = self.samples_in_batch(batch)
 
-            if transform is not None:
-                batch = transform(batch, batch_id)
-
+            for callback in self.callbacks:
+                callback.on_before_batch_transfer(self, self.model, batch, batch_id)
+                                    
             batch = self.to_device(batch)
+            
+            for callback in self.callbacks:
+                callback.on_after_batch_transfer(self, self.model, batch, batch_id)
 
             if scaler is None:
                 step = fun_step(batch, batch_id)
@@ -329,7 +333,7 @@ class Trainer:
 
             if verbose and (time.time()-lst > 1 or batch_id+1 == len(data) ):
                 lst = time.time()
-                self.fit_progress(epoch, train, (batch_id+1)/len(data),
+                self.fit_progress(epoch, train, batch_id+1, len(data),
                                   losses_all, scores_all, counts_all, samples, steps, time.time()-beg)
 
         if train: self.hist.time.trn += (time.time()-beg)
@@ -338,7 +342,7 @@ class Trainer:
         if scores_all is not None:
             scores_all = scores_all.cpu()
         if losses_all is not None:
-            self.fit_progress(epoch, train, 1, losses_all, scores_all, counts_all, samples, steps, time.time()-beg)
+            self.fit_progress(epoch, train, len(data), len(data), losses_all, scores_all, counts_all, samples, steps, time.time()-beg)
             losses_all = losses_all.cpu()
 
         return losses_all, scores_all, counts_all, (samples, steps, time.time()-beg)
@@ -354,7 +358,7 @@ class Trainer:
 
     #---------------------------------------------------------------------------
 
-    def fit_progress(self, epoch, train, done, losses, scores, counts, samples, steps, tm):
+    def fit_progress(self, epoch, train, batch_id, data_len, losses, scores, counts, samples, steps, tm):
         """
         Вывод информации о прогрессе обучения (эпоха, время, ошибка и т.п.)
         В конкретном проекте можно перопределить.
@@ -367,10 +371,15 @@ class Trainer:
             if len(score) > 1: st += "("                            # вспомогательные
             for i in range(1, len(score)):
                 st += f"{score[i]:.4f}" + (", " if i+1 < len(score) else ") ")
-        st += f"loss={loss:.4f} "
+        st += f"loss={loss:.4f};"
+        st += f" best score=(val:{(self.hist.val.best.score or 0.0):.4f}[{self.hist.val.best.score_epochs or ' '}] trn:{(self.hist.trn.best.score or 0.0):.4f}[{self.hist.trn.best.score_epochs or ' '}]),"
+        st += f" loss=(val:{(self.hist.val.best.loss or 0.0):.4f}[{self.hist.val.best.loss_epochs or ' '}] trn:{(self.hist.trn.best.loss or 0.0):.4f}[{self.hist.trn.best.loss_epochs or ' '}])"
 
         t_unit, t_unit_scale,  c_unit, c_unit_power = self.unit_scales()
-        print(f"\r{epoch:3d}{'t' if train else 'v'}[{100*done:3.0f}%]  {st}", end="          ")
+        #data_len = str(data_len)
+        #batch_id = str(batch_id).rjust(len(data_len))
+        #print(f"\r{epoch:3d}{'t' if train else 'v'}[{batch_id}/{data_len}] {st}", end="   ")
+        print(f"\r{epoch:3d}{'t' if train else 'v'}[{batch_id:4d}/{data_len:4d}] {st}", end="   ")
 
     #---------------------------------------------------------------------------
 
@@ -709,35 +718,40 @@ class Trainer:
 
     #---------------------------------------------------------------------------
 
-    def load(self, fname, ClassModel, load_optimizer=False, copy_history=False, copy_view=False):
+    def load(fname, ClassModel):
+        """
+        Static method of created trainer with loaded model.
+
+        Example
+        ------------ 
+        trainer.save("cur_model.pt")
+        ...
+        new_trainer = Trainer.load("cur_model.pt")
+        new_trainer.plot()
+        """        
         try:
             state = torch.load(fname, map_location='cpu')
+            print(f"info: {state['info']}")
+            print(f"date: {state['date']}")
         except:
             print(f"Cannot open file: '{fname}'")
             return None
-
-        try:
+        try:            
             assert type(state) == dict,  f"Apparently this model was not saved by the trainer: state:{type(state)}"
             assert 'model'  in state,    f"Apparently this model was not saved by the trainer: no 'model' in state: {list(state.keys())}"
             assert 'config' in state,    f"Apparently this model was not saved by the trainer: no 'config' in state: {list(state.keys())}"
-            model = ClassModel(state['config'])
-            model.load_state_dict(state['model'])
-            if load_optimizer and self.optim is not None and 'optimizer' in state:
-                self.optim.load_state_dict(state)
+            
+            trainer = Trainer(None, None)
+         
+            trainer.model = ClassModel(state['config'])
+            trainer.model.load_state_dict(state['model'])
 
-            state['view'] = self.view.copy()(state['view'])  # для совместимости с новыми версиями
-            state['hist'] = self.hist.copy()(state['hist'])  # если что-то потом было добавлено
+            #trainer.optim.load_state_dict(state)
 
-            if copy_history:
-                self.hist = state['hist']
-            if copy_view:
-                self.view = state['view']
+            trainer.hist(state['hist'])
+            trainer.view(state['view'])
 
-            print(f"info: {state['info']}")
-            print(f"date: {state['date']}")
-            self.stat(newline=False)
-            del state['model']
-            return model, state
+            return trainer
         except:
             print(f"Something  wrong in the function trainer.load fname: '{fname}'")
             return None

@@ -277,7 +277,7 @@ class ResCNN(nn.Module):
             drop       (float=0.0 or list):
                 dropout after each layer                  
             bias       (bool=False or list):
-            averpool   (bool=True)        
+            averpool   (bool=False)        
         """
         super().__init__()     
         self.cfg = ResCNN.default()
@@ -302,7 +302,7 @@ class ResCNN(nn.Module):
             pool_str = 0,          # int or list: stride of max-pooling kernel (if 0, then =pool_ker)
             drop     = 0,          # int or list: dropout after each layer                  
             bias      = False,                         
-            averpool  = True,                                            
+            averpool  = False,                                            
         ))
 
     #---------------------------------------------------------------------------

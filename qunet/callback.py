@@ -65,6 +65,23 @@ class Callback:
         Called when the train ends.
         """
         pass
+
+    #---------------------------------------------------------------------------  
+        
+    def on_before_batch_transfer(self, trainer, model, batch, batch_id):
+        """
+        Called before transfer batch to GPU
+        """
+        pass
+
+    #---------------------------------------------------------------------------
+    #     
+    def on_after_batch_transfer(self, trainer, model, batch, batch_id):
+        """
+        Called after transfer batch to GPU
+        """
+        pass
+
     #---------------------------------------------------------------------------
 
     def on_validation_epoch_start(self, trainer, model):
@@ -72,6 +89,7 @@ class Callback:
         Called when the validation loop begins.
         """
         pass
+
     #---------------------------------------------------------------------------
 
     def on_validation_epoch_end(self, trainer, model):
