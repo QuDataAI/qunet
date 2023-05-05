@@ -284,21 +284,29 @@ class Trainer:
             self.hist.epochs  += 1                  # эпох за всё время (а если packs > 1 ?)
             self.optim.zero_grad()                  # обнуляем градиенты
 
-        fun_step = self.get_fun_step(model, train)  # функция шага тренировки или валидации
-        transform = self.transforms.trn if train else self.transforms.val
+        fun_step = self.get_fun_step(model, train)  # функция шага тренировки или валидации        
 
         samples, steps, beg, lst = 0, 0, time.time(), time.time()
         counts_all, losses_all,  scores_all = torch.empty(0,1), None,  None
         for batch_id, batch in enumerate(data):
             num   = self.samples_in_batch(batch)
 
-            for callback in self.callbacks:
-                callback.on_before_batch_transfer(self, self.model, batch, batch_id)
-                                    
-            batch = self.to_device(batch)
-            
-            for callback in self.callbacks:
-                callback.on_after_batch_transfer(self, self.model, batch, batch_id)
+            if train:
+                for callback in self.callbacks:
+                    batch = callback.on_train_before_batch_transfer(self, self.model, batch, batch_id)
+
+                batch = self.to_device(batch)
+
+                for callback in self.callbacks:
+                    batch = callback.on_train_after_batch_transfer(self, self.model, batch, batch_id)                
+            else:
+                for callback in self.callbacks:
+                    batch = callback.on_validation_before_batch_transfer(self, self.model, batch, batch_id)
+
+                batch = self.to_device(batch)
+
+                for callback in self.callbacks:
+                    batch = callback.on_validation_after_batch_transfer(self, self.model, batch, batch_id)
 
             if scaler is None:
                 step = fun_step(batch, batch_id)
@@ -428,12 +436,14 @@ class Trainer:
             if n_batches > 0 and batch_id + 1 > n_batches:
                 break
 
-            if self.transforms.tst is not None:
-                batch = self.transform.tst(batch, batch_id)
-            elif self.transforms.val is not None:
-                batch = self.transform.val(batch, batch_id)
+            for callback in self.callbacks:
+                batch = callback.on_predict_before_batch_transfer(self, self.model, batch, batch_id)
 
             batch = self.to_device(batch)
+
+            for callback in self.callbacks:
+                batch = callback.on_predict_after_batch_transfer(self, self.model, batch, batch_id)
+
 
             if scaler is None:
                 out = model.predict_step(batch, batch_id)

@@ -58,35 +58,12 @@ class Callback:
         Called when the train begins.
         """
         pass
+
     #---------------------------------------------------------------------------
 
     def on_train_epoch_end(self, trainer, model):
         """
         Called when the train ends.
-        """
-        pass
-
-    #---------------------------------------------------------------------------  
-        
-    def on_before_batch_transfer(self, trainer, model, batch, batch_id):
-        """
-        Called before transfer batch to GPU
-        """
-        pass
-
-    #---------------------------------------------------------------------------
-    #     
-    def on_after_batch_transfer(self, trainer, model, batch, batch_id):
-        """
-        Called after transfer batch to GPU
-        """
-        pass
-
-    #---------------------------------------------------------------------------
-
-    def on_validation_epoch_start(self, trainer, model):
-        """
-        Called when the validation loop begins.
         """
         pass
 
@@ -100,25 +77,9 @@ class Callback:
 
     #---------------------------------------------------------------------------
 
-    def on_best_score(self, trainer, model):
+    def on_validation_epoch_start(self, trainer, model):
         """
-        Called when get new best score.
-        """
-        pass
-
-    #---------------------------------------------------------------------------
-
-    def on_best_loss(self, trainer, model):
-        """
-        Called when get new best loss.
-        """
-        pass
-
-    #---------------------------------------------------------------------------
-
-    def on_after_plot(self, trainer, model):
-        """
-        Called after plot_period.
+        Called when the validation loop begins.
         """
         pass
 
@@ -138,6 +99,22 @@ class Callback:
         pass
     #---------------------------------------------------------------------------
 
+    def on_best_score(self, trainer, model):
+        """
+        Called when get new best score.
+        """
+        pass
+
+    #---------------------------------------------------------------------------
+
+    def on_best_loss(self, trainer, model):
+        """
+        Called when get new best loss.
+        """
+        pass
+
+    #---------------------------------------------------------------------------
+
     def on_save_checkpoint(self, trainer, model, checkpoint):
         """
         Called when saving a checkpoint to give you a chance to store anything else you might want to save.
@@ -152,4 +129,64 @@ class Callback:
             the checkpoint dictionary that will be saved.        
         """
         pass
+
     #---------------------------------------------------------------------------
+
+    def on_after_plot(self, trainer, model):
+        """
+        Called after plot_period.
+        """
+        pass
+
+    #---------------------------------------------------------------------------  
+    #                                 Batches
+    #---------------------------------------------------------------------------  
+        
+    def on_train_before_batch_transfer(self, trainer, model, batch, batch_id):
+        """
+        Called before transfer batch to GPU
+        """
+        return batch
+
+    #---------------------------------------------------------------------------
+    #     
+    def on_train_after_batch_transfer(self, trainer, model, batch, batch_id):
+        """
+        Called after transfer batch to GPU
+        """
+        return batch
+
+    #---------------------------------------------------------------------------  
+        
+    def on_validation_before_batch_transfer(self, trainer, model, batch, batch_id):
+        """
+        Called before transfer batch to GPU
+        """
+        return batch
+
+    #---------------------------------------------------------------------------
+    #     
+    def on_validation_after_batch_transfer(self, trainer, model, batch, batch_id):
+        """
+        Called after transfer batch to GPU
+        """
+        return batch
+
+    #---------------------------------------------------------------------------
+    #     
+    def on_predict_before_batch_transfer(self, trainer, model, batch, batch_id):
+        """
+        Called before transfer batch to GPU
+        """
+        return batch
+
+    #---------------------------------------------------------------------------
+    #     
+    def on_predict_after_batch_transfer(self, trainer, model, batch, batch_id):
+        """
+        Called after transfer batch to GPU
+        """
+        return batch
+    
+    #---------------------------------------------------------------------------
+
