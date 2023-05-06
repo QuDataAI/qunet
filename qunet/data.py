@@ -153,15 +153,6 @@ class Data:
 
     #---------------------------------------------------------------------------
 
-    def transform(self):
-        """ 
-        Can override the successor, for example, data re-sorting.
-        Called in the __next__ iterator before sending the generated batch.
-        """
-        pass
-
-    #---------------------------------------------------------------------------
-
     def get_batch(self, data, s, B):
         """ Get batch size B starting from sample s. """        
         if torch.is_tensor(data):
@@ -180,10 +171,10 @@ class Data:
         or                                                                           \
            (self.n_batches > 0 and self.start >= self.n_batches * self.batch_size ):
                 self.start = self.pack_id = 0
-                if self.shuffle:
-                    self.data = self.mix(self.data)
-                self.transform()
-                raise StopIteration
+                if self.data_is_over():
+                    if self.shuffle:
+                        self.data = self.mix(self.data)                
+                    raise StopIteration
 
         n = self.count() // self.n_packs
         if self.start > self.pack_id * n + n:
@@ -194,8 +185,20 @@ class Data:
         self.start += self.batch_size
         return batch
 
+
+    #---------------------------------------------------------------------------
+
+    def data_is_over(self):
+        """
+        Overridden if part of the data needs to be retrieved from disk.
+        """
+        return True
+    #---------------------------------------------------------------------------
+
     def __iter__(self):
         return self
+    
+    #---------------------------------------------------------------------------
 
     def __len__(self):
         nb = self.count()  // self.batch_size

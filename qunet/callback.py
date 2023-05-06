@@ -38,6 +38,21 @@ class Callback:
 
     #---------------------------------------------------------------------------
 
+    def on_predict_start(self, trainer, model):
+        """
+        Called when the predict begins.
+        """
+        pass
+    #---------------------------------------------------------------------------
+
+    def on_predict_end(self, trainer, model):
+        """
+        Called when predict ends.
+        """
+        pass
+
+    #---------------------------------------------------------------------------
+
     def on_epoch_start(self, trainer, model):
         """
         Called when epoch in fit begins.
@@ -69,14 +84,6 @@ class Callback:
 
     #---------------------------------------------------------------------------
 
-    def on_validation_epoch_end(self, trainer, model):
-        """
-        Called when the validation loop ends.
-        """
-        pass
-
-    #---------------------------------------------------------------------------
-
     def on_validation_epoch_start(self, trainer, model):
         """
         Called when the validation loop begins.
@@ -85,56 +92,9 @@ class Callback:
 
     #---------------------------------------------------------------------------
 
-    def on_predict_start(self, trainer, model):
+    def on_validation_epoch_end(self, trainer, model):
         """
-        Called when the predict begins.
-        """
-        pass
-    #---------------------------------------------------------------------------
-
-    def on_predict_end(self, trainer, model):
-        """
-        Called when predict ends.
-        """
-        pass
-    #---------------------------------------------------------------------------
-
-    def on_best_score(self, trainer, model):
-        """
-        Called when get new best score.
-        """
-        pass
-
-    #---------------------------------------------------------------------------
-
-    def on_best_loss(self, trainer, model):
-        """
-        Called when get new best loss.
-        """
-        pass
-
-    #---------------------------------------------------------------------------
-
-    def on_save_checkpoint(self, trainer, model, checkpoint):
-        """
-        Called when saving a checkpoint to give you a chance to store anything else you might want to save.
-
-        Args:
-        ------------
-        trainer (Trainer):
-            the current Trainer instance.
-        modele (nn.Module): 
-            the current LightningModule instance.
-        checkpoint (Dict[str, Any]):
-            the checkpoint dictionary that will be saved.        
-        """
-        pass
-
-    #---------------------------------------------------------------------------
-
-    def on_after_plot(self, trainer, model):
-        """
-        Called after plot_period.
+        Called when the validation loop ends.
         """
         pass
 
@@ -189,4 +149,46 @@ class Callback:
         return batch
     
     #---------------------------------------------------------------------------
+    #                                   Saves
+    #---------------------------------------------------------------------------
+
+    def on_best_score(self, trainer, model):
+        """
+        Called when get new best score.
+        """
+        pass
+
+    #---------------------------------------------------------------------------
+
+    def on_best_loss(self, trainer, model):
+        """
+        Called when get new best loss.
+        """
+        pass
+
+    #---------------------------------------------------------------------------
+
+    def on_save_checkpoint(self, trainer, model, checkpoint):
+        """
+        Called when saving a checkpoint to give you a chance to store anything else you might want to save.
+
+        Args:
+        ------------
+        trainer (Trainer):
+            the current Trainer instance.
+        modele (nn.Module): 
+            the current LightningModule instance.
+        checkpoint (Dict[str, Any]):
+            the checkpoint dictionary that will be saved.        
+        """
+        pass
+
+    #---------------------------------------------------------------------------
+
+    def on_after_plot(self, trainer, model):
+        """
+        Called after plot_period.
+        """
+        pass
+
 

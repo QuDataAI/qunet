@@ -5,17 +5,22 @@ from   tqdm.auto import tqdm
 
 #---------------------------------------------------------------------------
 
-def plot_histogram( x, x_sub, pref="", digits=1, w=12, h=3, bins=50, bins_sub=100):
+def plot_histogram( x, x_sub=None, pref="", digits=1, w=12, h=3, bins=50, bins_sub=100, xlim=None):
     """ 
     Distribution of values of x and its subset x_sub (in a narrower range) 
     """
     r = lambda x: '{x:.{digits}f}'.format(x=round(x,digits), digits=digits)
-    plt.figure(figsize=(w,h), facecolor ='w')         
-    plt.suptitle(f"{pref}median={r(np.median(x))}; mean={r(x.mean())} ± {r(x.std())}  [min,max]=[{r(x.min())}, {r(x.max())}]; cnt={len(x)} ({100*len(x_sub)/len(x):.0f}%)", fontsize=14)
-    plt.subplot(1,2,1)
-    plt.hist(x, bins=bins, log=True, color="lightblue", ec="black");  plt.grid(ls=":",alpha=1); plt.ylabel("log10(N)")
-    plt.subplot(1,2,2)
-    plt.hist(x_sub, bins=bins_sub, density=True, color="lightblue", ec="black");    plt.grid(ls=":",alpha=1); plt.ylabel("Density")
+    if x_sub is not None:
+        _, (ax1, ax2) = plt.subplots(1,2, figsize=(w, h), facecolor ='w')    
+        plt.suptitle(f"{pref}median={r(np.median(x))}; mean={r(x.mean())} ± {r(x.std())}  [min,max]=[{r(x.min())}, {r(x.max())}]; cnt={len(x)} ({100*len(x_sub)/len(x):.0f}%)", fontsize=14)    
+        ax1.hist(x, bins=bins, log=True, color="lightblue", ec="black");  plt.grid(ls=":",alpha=1); plt.ylabel("log10(N)")    
+        ax2.hist(x_sub, bins=bins_sub, density=True, color="lightblue", ec="black");    plt.grid(ls=":",alpha=1); plt.ylabel("Density")
+    else:
+        _, ax = plt.subplots(1,1, figsize=(w, h), facecolor ='w')    
+        plt.title(f"{pref}median={r(np.median(x))}; mean={r(x.mean())} ± {r(x.std())} [{r(x.min())}, {r(x.max())}]; cnt={len(x)}", fontsize=14)    
+        ax.hist(x, bins=bins, density=True, color="lightblue", ec="black");    plt.grid(ls=":",alpha=1); plt.ylabel("Density")
+        if xlim is not None:
+            ax.set_xlim(xlim)
     plt.show()
 
 #---------------------------------------------------------------------------
@@ -152,5 +157,10 @@ def subplot_history(sub, val, trn, view, x_min, x_max, c_unit, c_unit_power, uni
             ax2.set_yticklabels([])   
             ax2.minorticks_off() # for log scale         
 
-#---------------------------------------------------------------------------
+#===============================================================================
+#                                   Main
+#===============================================================================
 
+if __name__ == '__main__':
+    x = np.random.normal(size=(1000,))
+    plot_histogram(x, w=8, digits=3)

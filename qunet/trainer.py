@@ -15,7 +15,7 @@ class Trainer:
     Generic model training class.
     Any method can, of course, be overridden by inheritance or by an instance.
     """
-    def __init__(self, model, data_trn=None, data_val=None, callbacks=[], score_max=True) -> None:
+    def __init__(self, model=None, data_trn=None, data_val=None, callbacks=[], score_max=True) -> None:
         """
         Trainer 
 
@@ -58,12 +58,6 @@ class Trainer:
             loss   = None,              # folder to save the best val loss models
             score  = None,              # folder to save the best val score models
             points = None               # folder to save checkpoints
-        )
-
-        self.transforms = Config(       # функции преобразования батча (внешние)
-            trn = None,
-            val = None,
-            tst = None
         )
 
         # -------------------------------- настройки для построения графиков ошибок и метрик
@@ -263,6 +257,7 @@ class Trainer:
         if Batch in batch.__class__.__bases__:
             return len(batch)
         assert False, "wrong type of the fist element in batch"
+
     #---------------------------------------------------------------------------
 
     def fit_epoch(self, epoch, model, data,  train=True, accumulate=1, verbose=1):
@@ -387,7 +382,7 @@ class Trainer:
         #data_len = str(data_len)
         #batch_id = str(batch_id).rjust(len(data_len))
         #print(f"\r{epoch:3d}{'t' if train else 'v'}[{batch_id}/{data_len}] {st}", end="   ")
-        print(f"\r{epoch:3d}{'t' if train else 'v'}[{batch_id:4d}/{data_len:4d}] {st}", end="   ")
+        print(f"\r{self.hist.epochs:3d}{'t' if train else 'v'}[{batch_id:4d}/{data_len:4d}] {st}", end="   ")
 
     #---------------------------------------------------------------------------
 
@@ -401,7 +396,7 @@ class Trainer:
 
     #---------------------------------------------------------------------------
 
-    def predict(self, model, data, whole=False, batch_size=-1, n_batches=-1, verbose:bool = True):
+    def predict(self, model, data, whole=False, batch_size=-1, n_batches=-1,  verbose:bool = True):
         """
         Calculate prediction for each example in data.
         The result is a dict whose composition depends on the dict returned by the model's predict_step method.
@@ -416,6 +411,7 @@ class Trainer:
         for callback in self.callbacks:
             callback.on_predict_start(self, self.model)
 
+        model.to(self.device)
         model.train(False)               # режим тестирование
         torch.set_grad_enabled(False)    # вычислительный граф не строим
         data.whole = whole               # обычно по всем примерам (и по дробному батчу)
@@ -430,8 +426,9 @@ class Trainer:
         if torch.cuda.is_available() and self.dtype != torch.float32:
             scaler = torch.cuda.amp.GradScaler()
 
-        samples, beg, lst = 0, time.time(), time.time()
-        res = dict()
+        samples, beg, lst = 0, time.time(), time.time()        
+        res = dict()                
+
         for batch_id, batch in enumerate(data):
             if n_batches > 0 and batch_id + 1 > n_batches:
                 break
@@ -466,6 +463,7 @@ class Trainer:
             if verbose and (time.time()-lst > 1 or batch_id+1 == len(data) ):
                 lst = time.time()
                 print(f"\r[{100*(batch_id+1)/len(data):3.0f}%]  {(time.time()-beg)/60:.2f}m", end=" ")
+
 
         if verbose:
             print(f" keys: {list(res.keys())}")
@@ -711,17 +709,30 @@ class Trainer:
     def save(self, fname, model = None, optim=None, info=""):
         try:
             model = model or self.model
+            assert model is not None, "You don't have a model!"
+
             cfg = model.cfg if hasattr(model, "cfg") else Config()
-            Path(fname).parent.mkdir(parents=True, exist_ok=True)
+            Path(fname).parent.mkdir(parents=True, exist_ok=True)            
             state = {
                 'info':            info,
                 'date':            datetime.datetime.now(),   # дата и время
-                'config':          cfg,                       # конфигурация модели
                 'model' :          model.state_dict(),        # параметры модели
-                'optimizer':       optim.state_dict() if optim is not None else None,
+                'config':          cfg,                       # конфигурация модели            
+                'class':           model.__class__,
                 'hist':            self.hist,
                 'view':            self.view,
+
+                'optim':           optim.__class__ if optim is not None else None,
+                'optim_cfg':       None,
+                'optim_state':     None,
             }
+            if optim is not None:                
+                if hasattr(optim, "defaults"):
+                    state['optim_cfg'] = optim.defaults
+                elif hasattr(optim, "cfg"):
+                    state['optim_cfg'] = optim.cfg
+                if hasattr(optim, "state_dict"):
+                    state['state_dict'] = optim.state_dict()
             torch.save(state, fname)
         except:
             print(f"Something  wrong in the function trainer.save fname: '{fname}'")
@@ -741,8 +752,11 @@ class Trainer:
         """        
         try:
             state = torch.load(fname, map_location='cpu')
-            print(f"info: {state['info']}")
-            print(f"date: {state['date']}")
+            print(f"info:  {state.get('info', '???')}")
+            print(f"date:  {state.get('date', '???')}")
+            print(f"model: {state.get('class','???')}")            
+            print(f"optim: {state.get('optim','???')}")
+            print(f"       {state.get('optim_cfg','???')}")
         except:
             print(f"Cannot open file: '{fname}'")
             return None
