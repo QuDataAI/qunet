@@ -760,22 +760,20 @@ class Trainer:
         except:
             print(f"Cannot open file: '{fname}'")
             return None
-        try:            
-            assert type(state) == dict,  f"Apparently this model was not saved by the trainer: state:{type(state)}"
-            assert 'model'  in state,    f"Apparently this model was not saved by the trainer: no 'model' in state: {list(state.keys())}"
-            assert 'config' in state,    f"Apparently this model was not saved by the trainer: no 'config' in state: {list(state.keys())}"
+        
+        
+        assert type(state) == dict,  f"Apparently this model was not saved by the trainer: state:{type(state)}"
+        assert 'model'  in state,    f"Apparently this model was not saved by the trainer: no 'model' in state: {list(state.keys())}"
+        assert 'config' in state,    f"Apparently this model was not saved by the trainer: no 'config' in state: {list(state.keys())}"
             
-            trainer = Trainer(None, None)
+        trainer = Trainer(None, None)
          
-            trainer.model = ClassModel(state['config'])
-            trainer.model.load_state_dict(state['model'])
+        trainer.model = ClassModel(state['config'])
+        trainer.model.load_state_dict(state['model'])
 
-            #trainer.optim.load_state_dict(state)
+        #trainer.optim.load_state_dict(state)
 
-            trainer.hist(state['hist'])
-            trainer.view(state['view'])
+        trainer.hist(state['hist'])
+        trainer.view(state['view'])
 
-            return trainer
-        except:
-            print(f"Something  wrong in the function trainer.load fname: '{fname}'")
-            return None
+        return trainer
