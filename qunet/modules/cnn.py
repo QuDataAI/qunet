@@ -49,6 +49,8 @@ class CNN(nn.Module):
         self.cfg.set(*args, **kvargs)
         self.create()
 
+    #---------------------------------------------------------------------------
+    
     def default():
         return copy.deepcopy(Config(
             input    = None,       # input tensor shape:  (channels, height, width)

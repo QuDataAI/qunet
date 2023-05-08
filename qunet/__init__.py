@@ -4,6 +4,7 @@ from .trainer             import *
 from .optim               import *
 from .plots               import *
 from .callback            import *
+from .losses              import *
 
 from .modules.mlp         import *
 from .modules.cnn         import *
