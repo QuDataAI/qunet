@@ -72,7 +72,13 @@ class Trainer:
 
             x_min = 0,                 # minimum value in samples on the x-axis (if < 0 last x_min samples)
             x_max = None,              # maximum value in samples on the x-axis (if None - last)
-
+            smooth = Config(
+                count  = 200,          # if the number of points exceeds count - draw a smooth line
+                kern   = 50,           # averaging kernel (how many points are averaged)
+                stride = 1,            # averaging step
+                width  = 1.5,          # line thickness
+                alpha  = 0.5,          # source data transparency
+            ),
             loss = Config(
                 show  = True,          # show loss subplot
                 y_min = None,          # fixing the minimum value on the y-axis
@@ -82,7 +88,9 @@ class Trainer:
                 labels= True,          # show labels (training events)
                 trn_checks = False,     # show the achievement of the minimum training loss (dots)
                 val_checks = True,     # show the achievement of the minimum validation loss (dots)
-                last_checks = 100          # how many last best points to display (if -1 then all)
+                last_checks = 100,          # how many last best points to display (if -1 then all)
+                cfg   =  Config(),
+                exclude = [],
             ),
             score = Config(
                 show  = True,          # show score subplot
@@ -93,7 +101,9 @@ class Trainer:
                 labels = True,         # show labels (training events)
                 trn_checks = False,    # show the achievement of the optimum training score (dots)
                 val_checks = True,     # show the achievement of the optimum validation score (dots)
-                last_checks = 100      # how many last best points to display (if -1 then all)
+                last_checks = 100,      # how many last best points to display (if -1 then all)
+                cfg =  Config(),
+                exclude = [],
             ),
         )
 
@@ -653,13 +663,13 @@ class Trainer:
 
     #---------------------------------------------------------------------------
 
-    def plot(self, view=None, hist=None):
+    def plot(self, view=None, hist=None, fname=None):
         """
         Plot training history
         """
         view = view or self.view
         hist = hist or self.hist
-        plot_history(hist, view)
+        plot_history(hist, view, fname)
 
     #---------------------------------------------------------------------------
 
@@ -767,9 +777,10 @@ class Trainer:
         assert 'config' in state,    f"Apparently this model was not saved by the trainer: no 'config' in state: {list(state.keys())}"
             
         trainer = Trainer(None, None)
-         
-        trainer.model = ClassModel(state['config'])
-        trainer.model.load_state_dict(state['model'])
+        
+        if ClassModel is not None:
+            trainer.model = ClassModel(state['config'])
+            trainer.model.load_state_dict(state['model'])
 
         #trainer.optim.load_state_dict(state)
 

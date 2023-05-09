@@ -5,7 +5,7 @@ from   tqdm.auto import tqdm
 
 #---------------------------------------------------------------------------
 
-def plot_histogram( x, x_sub=None, pref="", digits=1, w=12, h=3, bins=50, bins_sub=100, xlim=None):
+def plot_histogram( x, x_sub=None, pref="", digits=1, w=12, h=3, bins=50, bins_sub=100, xlim=None, fname=""):
     """ 
     Distribution of values of x and its subset x_sub (in a narrower range) 
     """
@@ -21,11 +21,16 @@ def plot_histogram( x, x_sub=None, pref="", digits=1, w=12, h=3, bins=50, bins_s
         ax.hist(x, bins=bins, density=True, color="lightblue", ec="black");    plt.grid(ls=":",alpha=1); plt.ylabel("Density")
         if xlim is not None:
             ax.set_xlim(xlim)
-    plt.show()
+    
+    if fname:
+        plt.savefig(fname, bbox_inches='tight')
+    else:
+        plt.show()
+
 
 #---------------------------------------------------------------------------
 
-def plot_history(hist, view):
+def plot_history(hist, view, fname=""):
     """
     """    
     samples, steps             = hist.samples, hist.steps
@@ -50,34 +55,38 @@ def plot_history(hist, view):
     plt.suptitle(fr"samples={samples}, steps:{steps}; lr={lr}; batch=(trn:{bs_trn}, val:{bs_val}); time=(trn:{tm_trn}, val:{tm_val}){t_unit}/$10^{c_unit_power:.0f}$; params={hist.params/1e3:.0f}k", fontsize = 10)
 
     if  not view.loss.show:
-        subplot_history(111, val, trn, view=view.score, x_min=view.x_min, x_max=view.x_max, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='score')
+        subplot_history(111, val, trn, view=view.score, view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='score')
     elif not view.score.show:
-        subplot_history(111, val, trn, view=view.loss,  x_min=view.x_min, x_max=view.x_max, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='loss')
+        subplot_history(111, val, trn, view=view.loss,  view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='loss')
     else:
-        subplot_history(121, val, trn, view=view.score, x_min=view.x_min, x_max=view.x_max, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='score')
-        subplot_history(122, val, trn, view=view.loss,  x_min=view.x_min, x_max=view.x_max, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='loss')            
-    plt.show()
+        subplot_history(121, val, trn, view=view.score, view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='score')
+        subplot_history(122, val, trn, view=view.loss,  view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='loss')            
+    if fname:
+        plt.savefig(fname, bbox_inches='tight')
+    else:
+        plt.show()
 
     #---------------------------------------------------------------------------    
 
-def subplot_history(sub, val, trn, view, x_min, x_max, c_unit, c_unit_power, unit, labels, kind):                
+def subplot_history(sub, val, trn, view, view_tot, c_unit, c_unit_power, unit, labels, kind):                
     
     ax1 = plt.subplot(sub); ax1.grid(ls=':')                           
     if len(val.samples) > 0 and len(trn.samples) > 0:        
         if unit == 'samples':
-            x_max = max(val.samples[-1], trn.samples[-1]) if x_max is None else x_max        
-            ax1.set_xlim(x_min/c_unit, x_max/c_unit)
+            x_max = max(val.samples[-1], trn.samples[-1]) if view_tot.x_max is None else view_tot.x_max        
+            ax1.set_xlim(view_tot.x_min/c_unit, x_max/c_unit)
         else:
-            x_max = max(val.epochs[-1], trn.epochs[-1]) if x_max is None else x_max        
-            ax1.set_xlim(x_min, x_max)
+            x_max = max(val.epochs[-1], trn.epochs[-1]) if view_tot.x_max is None else view_tot.x_max        
+            ax1.set_xlim(view_tot.x_min, x_max)
 
     if kind == 'loss':
+        
         best_loss  = f"{val.best.loss:.4f}"    if val.best.loss is not None  else "?"
         loss_val   = f"{val.losses[-1]:.4f}"   if len(val.losses)  else "?"
         loss_trn   = f"{trn.losses[-1]:.4f}"   if len(trn.losses)  else "?"
         plt.title(f"loss = (min: {best_loss} [{val.best.loss_epochs}], val: {loss_val}, trn: {loss_trn})", fontsize=12, pad=-2)
 
-    if kind == 'score':
+    if kind == 'score':        
         best_score = f"{val.best.score:.4f}"   if val.best.score is not None else "?"
         score_val  = f"{val.scores[-1]:.4f}"   if len(val.scores) else "?"
         score_trn  = f"{trn.scores[-1]:.4f}"   if len(trn.scores) else "?"
@@ -90,25 +99,22 @@ def subplot_history(sub, val, trn, view, x_min, x_max, c_unit, c_unit_power, uni
         if view.ticks:
             ax1.set_yticks(np.linspace(y_min, y_max, view.ticks))  
 
+    text = view.cfg.get_str(end="\n", exclude=view.exclude)
+    if text:                
+        ax1.text(0.02, 0.02, text[:-1],  horizontalalignment='left', verticalalignment='bottom', transform = ax1.transAxes)
+
     if len(trn.samples):                      # trn
         x = np.array(trn.samples)/c_unit if unit=='sample' else np.array(trn.epochs)
-        y = trn.losses if kind=='loss' else trn.scores                
-        if len(x) != len(y):
-            print(f"Plot warning: {kind}: trn {len(x)} != {len(y)}")
-            x, y = x[:min(len(x),len(y))], y[:min(len(x),len(y))]
-            
-        ax1.plot(x, y, 'darkblue', linewidth=0.5)
+        y = trn.losses if kind=='loss' else trn.scores    
+        plot_smooth_line(ax1, x,y, 'darkblue', label=kind+'_trn', **view_tot.smooth.get_dict())            
 
     if len(val.samples):                      # val
         x = np.array(val.samples)/c_unit if unit=='sample' else np.array(val.epochs)
         y = val.losses if kind=='loss' else val.scores        
-        if len(x) != len(y):        
-            print(f"Plot warning: {kind}: val {len(x)} != {len(y)}")
-            x, y = x[:min(len(x),len(y))], y[:min(len(x),len(y))]
-        lw = 1.5 if len(x) < 100 else (1 if len(x) < 200 else 0.5)        
-        ax1.plot(x, y, 'g', linewidth=lw)
+        plot_smooth_line(ax1, x,y, 'g', label=kind+'_val', **view_tot.smooth.get_dict())
 
-    ax1.legend([kind+'_trn',  kind+'_val'], loc='upper left', frameon = False)
+
+    ax1.legend(loc='upper left', frameon = False)
     ax1.tick_params(axis='y', colors='darkgreen')
 
     if view.labels:
@@ -156,6 +162,25 @@ def subplot_history(sub, val, trn, view, x_min, x_max, c_unit, c_unit_power, uni
         if sub == 121:
             ax2.set_yticklabels([])   
             ax2.minorticks_off() # for log scale         
+
+
+def plot_smooth_line(ax=None, x=[],y=[], color="black", label="", count=200, kern=50, stride=10, width=1.5, alpha=0.5):    
+    if len(x) != len(y):        
+        print(f"Plot warning: {len(x)} != {len(y)}")
+        x, y = x[:min(len(x),len(y))], y[:min(len(x),len(y))]
+
+    lw = 1.5 if len(x) < 100 else (1 if len(x) < 200 else 0.5)        
+    if len(x) <  count:
+        ax.plot(x, y, color, linewidth=lw, label=label)
+    else:
+        if alpha > 0:
+            ax.plot(x, y, color, linewidth=lw, alpha=alpha)
+        pool = nn.AvgPool1d(kern, stride=stride, padding=kern // 2, count_include_pad=False)
+        avg_y = pool(torch.Tensor(y).view(1,-1)).flatten().numpy()
+        avg_x = pool(torch.Tensor(x).view(1,-1)).flatten().numpy()
+        ax.plot(avg_x, avg_y, color, linewidth=width, label=label)    
+        
+
 
 #===============================================================================
 #                                   Main
