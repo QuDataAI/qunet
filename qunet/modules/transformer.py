@@ -17,15 +17,15 @@ class SelfAttention(nn.Module):
 
         Args
         ------------
-            E (int):  
+            E (int):
                 tokens embedding dimension
-            H (int):  
+            H (int):
                 number of heads (E % H == 0 !)
             drop (float=0.0):
                 dropout probability
             res (int=1):
                 kind of skip-connections (for TransformerBlock): (0) f(x) - none; (1) x+f(x), (2)  x*w+f(x) training one for all E; (3) training for each E
-            causal (bool=False): 
+            causal (bool=False):
                 kind of causal attention mask (True: GPT, False: BERT)
             T_max (int=2048):
                 maximum number of tokens (needed for causal==True)
@@ -77,11 +77,11 @@ class SelfAttention(nn.Module):
 
     #---------------------------------------------------------------------------
 
-    def forward(self, x):  
+    def forward(self, x):
         """ (B,T,E) -> (B,T,E) """
         assert x.ndim == 3, f"wrong input x.ndim = {x.ndim}"
         # batch size, sequence length, embedding dimensionality and number of heads:
-        (B,T,E), H = x.size(), self.cfg.H  
+        (B,T,E), H = x.size(), self.cfg.H
         assert E == self.cfg.E, f"wrong input {E} != {self.cfg.E}"
 
         # calc (query, key, values) for all heads and move head forward to be the batch dim
@@ -103,7 +103,7 @@ class SelfAttention(nn.Module):
         y = self.c_proj(y)
         y = self.res_dropout(y)
         return y                               # (B,T,E)
-    
+
     #---------------------------------------------------------------------------
 
     def unit_test():
@@ -126,7 +126,7 @@ class SelfAttention(nn.Module):
         if res:
             print("ok SelfAttention")
         return res
-    
+
 #===============================================================================
 
 class FFT(nn.Module):
@@ -138,12 +138,12 @@ class FFT(nn.Module):
         FFT Block from FNet (see: "FNet: Mixing Tokens with Fourier Transforms")
 
         Args:
-        ------------        
+        ------------
             drop (float = 0.0)
                 dropout after fft
             res (int = 1):
                 kind of skip-connections (for TransformerBlock): (0) f(x) - none; (1) x+f(x), (2)  x*w+f(x) training one for all E; (3) training for each E
-            after (int = 1) 
+            after (int = 1)
                 after fft2: (1) take Re, (2) take Im, (3) Re**2+Im**2
 
         Example
@@ -165,7 +165,7 @@ class FFT(nn.Module):
     def default():
         return copy.deepcopy(Config(
             res   = 1,         # kind of skip-connections (in TransformerBlock)
-            drop  = 0,         # dropout на выходе внимания 
+            drop  = 0,         # dropout на выходе внимания
             after = 1,         # после fft2: 1 - брать Re, 2 брать Im, 3 Re**2+Im**2
         ))
 
@@ -216,15 +216,15 @@ class  TransformerBlock(nn.Module):
 
         Args
         ------------
-            E (int):  
+            E (int):
                 tokens embedding dimension
-            H (int=1):  
+            H (int=1):
                 number of heads (E % H == 0 !)
             drop (float=0.0):
                 dropout probability in attention and mlp
             res (int=1):
                 kind of skip-connections: (0) f(x) - none; (1) x+f(x), (2)  x*w+f(x) training one for all E; (3) training for each E
-            causal (bool=False): 
+            causal (bool=False):
                 kind of causal attention mask (True: GPT, False: BERT)
             T_max (int=2048):
                 maximum number of tokens (needed for causal==True)
@@ -334,7 +334,7 @@ class  TransformerBlock(nn.Module):
 
     #---------------------------------------------------------------------------
 
-    def forward(self, x):                          
+    def forward(self, x):
         """
         (B,T,E) -> (B,T,E)
         Классический highway: w=sigmoid(linear(x)); x*w + (1-w)*mlp, ...
@@ -419,11 +419,11 @@ class  Transformer(nn.Module):
         # В set не передаём kvargs, чтобы не было ворнингов по E, H и т.д.
         if 'n_blocks' in kvargs:
             self.cfg.n_blocks      = kvargs['n_blocks']
-        if 'is_fft' in kvargs:            
+        if 'is_fft' in kvargs:
             self.cfg.is_fft      = kvargs['is_fft']
-        if 'is_att' in kvargs:            
+        if 'is_att' in kvargs:
             self.cfg.is_att      = kvargs['is_att']
-        if 'is_mlp' in kvargs:            
+        if 'is_mlp' in kvargs:
             self.cfg.is_mlp      = kvargs['is_mlp']
 
         # одним аргументом задаём параметры в fft, att и mlp всех блоков
@@ -453,7 +453,7 @@ class  Transformer(nn.Module):
 
         if 'T_max'  in kvargs:
             self.cfg.block.att.T_max = kvargs['T_max']
-        
+
         self.create()
 
     #---------------------------------------------------------------------------
@@ -485,7 +485,7 @@ class  Transformer(nn.Module):
 
     #---------------------------------------------------------------------------
 
-    def forward(self, x):                   
+    def forward(self, x):
         """  (B,T,E) -> (B,T,E) """
         for block in self.blocks:
             x = block(x)                           # (B,T,E)
@@ -507,5 +507,5 @@ class  Transformer(nn.Module):
         else:
             print("ok Transformer")
         return res
-    
+
 #===============================================================================

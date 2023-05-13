@@ -80,3 +80,14 @@ X = torch.rand(2,3)
 Y = torch.rand(3,4,5)
 Z = f(X,Y)              # (2,4,5)
 ```
+</details>
+```python
+# 1.
+torch.einsum('ij,jkl->ikl', X, Y)
+# 2.
+torch.tensordot(X, Y, dims=([1],[0]) )
+# 3.
+( X @ Y.view(3,-1) ).view(2,4,5) 
+# 4.
+( X @ Y.permute(1,0,2) ).permute(1,0,2) 
+```

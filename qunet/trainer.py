@@ -91,6 +91,7 @@ class Trainer:
                 last_checks = 100,          # how many last best points to display (if -1 then all)
                 cfg   =  Config(),
                 exclude = [],
+                fontsize = 8,
             ),
             score = Config(
                 show  = True,          # show score subplot
@@ -104,6 +105,7 @@ class Trainer:
                 last_checks = 100,      # how many last best points to display (if -1 then all)
                 cfg =  Config(),
                 exclude = [],
+                fontsize = 8,
             ),
         )
 
@@ -385,14 +387,14 @@ class Trainer:
             for i in range(1, len(score)):
                 st += f"{score[i]:.4f}" + (", " if i+1 < len(score) else ") ")
         st += f"loss={loss:.4f};"
-        st += f" best score=(val:{(self.hist.val.best.score or 0.0):.4f}[{self.hist.val.best.score_epochs or ' '}] trn:{(self.hist.trn.best.score or 0.0):.4f}[{self.hist.trn.best.score_epochs or ' '}]),"
-        st += f" loss=(val:{(self.hist.val.best.loss or 0.0):.4f}[{self.hist.val.best.loss_epochs or ' '}] trn:{(self.hist.trn.best.loss or 0.0):.4f}[{self.hist.trn.best.loss_epochs or ' '}])"
+        st += f" best score=(val:{(self.hist.val.best.score or 0.0):.3f}[{self.hist.val.best.score_epochs or ' '}] trn:{(self.hist.trn.best.score or 0.0):.3f}[{self.hist.trn.best.score_epochs or ' '}]),"
+        st += f" loss=(val:{(self.hist.val.best.loss or 0.0):.3f}[{self.hist.val.best.loss_epochs or ' '}] trn:{(self.hist.trn.best.loss or 0.0):.3f}[{self.hist.trn.best.loss_epochs or ' '}])"
 
         t_unit, t_unit_scale,  c_unit, c_unit_power = self.unit_scales()
         #data_len = str(data_len)
         #batch_id = str(batch_id).rjust(len(data_len))
         #print(f"\r{epoch:3d}{'t' if train else 'v'}[{batch_id}/{data_len}] {st}", end="   ")
-        print(f"\r{self.hist.epochs:3d}{'t' if train else 'v'}[{batch_id:4d}/{data_len:4d}] {st}", end="   ")
+        print(f"\r{self.hist.epochs:3d}{'t' if train else 'v'}[{batch_id:4d}/{data_len:4d}] {st} {tm:.0f}s", end="   ")
 
     #---------------------------------------------------------------------------
 

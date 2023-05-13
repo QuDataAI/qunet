@@ -99,9 +99,9 @@ def subplot_history(sub, val, trn, view, view_tot, c_unit, c_unit_power, unit, l
         if view.ticks:
             ax1.set_yticks(np.linspace(y_min, y_max, view.ticks))  
 
-    text = view.cfg.get_str(end="\n", exclude=view.exclude)
+    text = view.cfg.get_jaml(exclude=view.exclude)
     if text:                
-        ax1.text(0.02, 0.02, text[:-1],  horizontalalignment='left', verticalalignment='bottom', transform = ax1.transAxes)
+        ax1.text(0.02, 0.02, text[:-1],  ha='left', va='bottom', transform = ax1.transAxes, fontsize=view.fontsize, family="monospace")
 
     if len(trn.samples):                      # trn
         x = np.array(trn.samples)/c_unit if unit=='sample' else np.array(trn.epochs)

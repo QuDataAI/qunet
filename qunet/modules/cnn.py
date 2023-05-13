@@ -50,7 +50,7 @@ class CNN(nn.Module):
         self.create()
 
     #---------------------------------------------------------------------------
-    
+
     def default():
         return copy.deepcopy(Config(
             input    = None,       # input tensor shape:  (channels, height, width)

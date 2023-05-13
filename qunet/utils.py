@@ -89,13 +89,27 @@ class Config:
         for k,v in self.__dict__.items():
             if not k.startswith("__") and k not in ["check_variable_existence", "set"] + exclude:
                 if isinstance(v, Config):
-                    res += f"{k}:"+" {"+v.get_str()+"}"+end
+                    res += f"{k}:"+" {"+v.get_str(exclude=exclude)+"}"+end
                 else:
                     if type(v) == str:
                         res +=  f"{k}:'{v}'{end}"
                     else:
                         res +=  f"{k}:{v}{end}"
         return res
+    
+    def get_jaml(self, exclude=[], level=0):
+        """ output of config parameters """
+        res = ""
+        for k,v in self.__dict__.items():
+            if not k.startswith("__") and k not in ["check_variable_existence", "set"] + exclude:
+                if isinstance(v, Config):
+                    res += " "*(4*level) + f"{k}:\n" +v.get_jaml(exclude=exclude, level=level+1)+"\n"
+                else:
+                    if type(v) == str:
+                        res += " "*(4*level) + f"{k}: '{v}'\n"
+                    else:
+                        res +=   " "*(4*level) + f"{k}: {v}\n"
+        return res    
 
     def get_dict(self, exclude=[]):
         """ output of config parameters """
@@ -103,7 +117,7 @@ class Config:
         for k,v in self.__dict__.items():
             if not k.startswith("__") and k not in ["check_variable_existence"] + exclude:
                 if isinstance(v, Config):
-                    res[k] = v.get_dict()
+                    res[k] = v.get_dict(exclude=exclude)
                 else:
                     res[k] = v
         return res
@@ -120,7 +134,10 @@ if __name__ == '__main__':
     cfg1.z=8
     print(cfg2)
 
+    cfg2.cfg = Config(a=1, b=Config(z=4, t=9))
     print(cfg2.get_dict())
+
+    print(cfg2.get_jaml())
 
     if False:
         cfg = Config(x=2, y=5, z=Config(v=0))
