@@ -57,7 +57,8 @@ class Trainer:
         self.folders = Config(
             loss   = None,              # folder to save the best val loss models
             score  = None,              # folder to save the best val score models
-            points = None               # folder to save checkpoints
+            points = None,              # folder to save checkpoints
+            prefix = "",                # add prefix to file name 
         )
 
         # -------------------------------- настройки для построения графиков ошибок и метрик
@@ -394,7 +395,7 @@ class Trainer:
         #data_len = str(data_len)
         #batch_id = str(batch_id).rjust(len(data_len))
         #print(f"\r{epoch:3d}{'t' if train else 'v'}[{batch_id}/{data_len}] {st}", end="   ")
-        print(f"\r{self.hist.epochs:3d}{'t' if train else 'v'}[{batch_id:4d}/{data_len:4d}] {st} {tm:.0f}s", end="   ")
+        print(f"\r{self.hist.epochs:3d}{'t' if train else 'v'}[{batch_id:4d}/{data_len:4d}] {st} {data_len*tm/max(batch_id,1):.0f}s", end="   ")
 
     #---------------------------------------------------------------------------
 
@@ -492,8 +493,10 @@ class Trainer:
     #---------------------------------------------------------------------------
 
     def fit(self,  epochs=None,  samples=None,
-            pre_val:bool=False, period_val:int=1, period_plot:int=100,
-            period_points:int=1, period_val_beg=1, samples_beg:int = None,            
+            period_plot:  int=100,  pre_val:bool=False, 
+            period_val:   int=1,  period_val_beg=1, val_beg:int = None,  
+            period_points:int=1,  points_start:int=1,
+                      
             monitor = [],
             patience = None):        
         """
@@ -503,18 +506,20 @@ class Trainer:
                 number of epochs for training (passes of one data_trn pack). If not defined (None) works "infinitely".
             samples (int):
                 if defined, then will stop after this number of samples, even if epochs has not ended
+            period_plot (int=100):
+                period after which the training plot is displayed (in epochs)
             pre_val (bool=False):
                 validate before starting training
             period_val (int=1):
                 period after which validation run (in epochs)
-            period_plot (int=100):
-                period after which the training plot is displayed (in epochs)
             period_val_beg (int=1):
-                validation period on the first samples_beg examples
-            samples_beg (int):
-                the number of samples from the start, after which the validation period will be equal to period_val.
+                validation period on the first val_beg epochs
+            val_beg (int=None):
+                the number of epochs from the start, after which the validation period will be equal to period_val.
             period_points (int=1):
-                period after which checkpoints are made and the current model is saved (in epochs)
+                period after which checkpoints  are made(in epochs)
+            points_start (int=1):
+                period after fit runs will be saved checkpoints with period period_points (in epochs)
             monitor (list=[]):
                 what to save in folders: monitor=['loss'] or monitor=['loss', 'score', 'points']
             patience (int):
@@ -587,7 +592,7 @@ class Trainer:
             for callback in self.callbacks:
                 callback.on_train_epoch_end(self, self.model)
 
-            period = period_val_beg if samples_beg and  self.hist['samples'] < samples_beg else period_val
+            period = period_val_beg if val_beg and  self.hist.epochs < val_beg  else period_val
             if  self.data.val is not None  and (period and epoch % period == 0) or epoch == epochs:
                 for callback in self.callbacks:
                     callback.on_validation_epoch_start(self, self.model)
@@ -604,7 +609,7 @@ class Trainer:
                     self.hist.val.best.loss_samples = self.hist.samples
                     self.hist.val.best.losses.append((loss_val, self.hist.epochs, self.hist.samples, self.hist.steps))
                     if self.folders.loss and 'loss' in monitor:
-                        self.save(Path(self.folders.loss) / Path(f"loss_{loss_val:.4f}_{self.now()}.pt"), model=self.model, optim=self.optim)
+                        self.save(Path(self.folders.loss) / Path(self.folders.prefix + f"loss_{loss_val:.4f}_{self.now()}.pt"), model=self.model, optim=self.optim)
                     if self.best.copy and 'loss' in monitor:
                         self.best.loss_models  = copy.deepcopy(self.model)
 
@@ -614,7 +619,7 @@ class Trainer:
                     self.hist.val.best.score_samples = self.hist.samples
                     self.hist.val.best.scores.append( ( score_val[0].item(), self.hist.epochs, self.hist.samples, self.hist.steps) )
                     if self.folders.score and 'score' in monitor:
-                        self.save(Path(self.folders.score) / Path(f"score_{score_val[0]:.4f}_{self.now()}.pt"), model=self.model, optim=self.optim)
+                        self.save(Path(self.folders.score) / Path(self.folders.prefix + f"score_{score_val[0]:.4f}_{self.now()}.pt"), model=self.model, optim=self.optim)
                     if self.best.copy and 'score' in monitor:
                         self.best.score_model  = copy.deepcopy(self.model)
 
@@ -628,12 +633,12 @@ class Trainer:
                         callback.on_after_plot(self, self.model)
                 self.stat()
 
-            if self.folders.points and 'points' in monitor and (epoch % period_points == 0 or epoch == epochs):
+            if self.folders.points and 'points' in monitor and (period_points > 0 and points_start < self.hist.epochs and self.hist.epochs % period_points == 0 or epoch == epochs):
                 for callback in self.callbacks:
                     callback.on_save_checkpoint(self, self.model, {})
                 score_val = score_val or [0]
                 score_trn = score_trn or [0]
-                self.save(Path(self.folders.points) / Path(f"points_{self.now()}_score_val_{score_val[0]:.4f}_trn_{score_trn[0]:.4f}_loss_val_{loss_val}_trn_{loss_trn}.pt"), model=self.model, optim=self.optim)
+                self.save(Path(self.folders.points) / Path(self.folders.prefix + f"points_{self.now()}_score_val_{score_val[0]:.4f}_trn_{score_trn[0]:.4f}_loss_val_{loss_val}_trn_{loss_trn}.pt"), model=self.model, optim=self.optim)
 
             self.step_schedulers(1, samples_trn)
 
@@ -722,6 +727,7 @@ class Trainer:
         try:
             model = model or self.model
             assert model is not None, "You don't have a model!"
+            optim = optim or self.optim
 
             cfg = model.cfg if hasattr(model, "cfg") else Config()
             Path(fname).parent.mkdir(parents=True, exist_ok=True)            
@@ -768,7 +774,7 @@ class Trainer:
             print(f"date:  {state.get('date', '???')}")
             print(f"model: {state.get('class','???')}")            
             print(f"optim: {state.get('optim','???')}")
-            print(f"       {state.get('optim_cfg','???')}")
+            #print(f"       {state.get('optim_cfg','???')}")
         except:
             print(f"Cannot open file: '{fname}'")
             return None
