@@ -15,7 +15,7 @@ class Trainer:
     Generic model training class.
     Any method can, of course, be overridden by inheritance or by an instance.
     """
-    def __init__(self, model=None, data_trn=None, data_val=None, callbacks=[], score_max=True) -> None:
+    def __init__(self, model=None, data_trn=None, data_val=None, callbacks=[], score_max=True, wandb_cfg=None) -> None:
         """
         Trainer 
 
@@ -31,6 +31,14 @@ class Trainer:
                 list of Callback instances to be called on events
             score_max (bool):
                 consider that the metric (the first column of the second tensor returned by the function `metrics` of the model ); should strive to become the maximum (for example, so for accuracy).
+            wandb_cfg (Config):
+                wandb params to external data tracking. You have to specify next:
+                    api_key(str)
+                        WANDB API key 
+                    project_name(str) 
+                        WANDB project name
+                    run_name(str, optional) 
+                        WANDB run name           
         """
         self.model     = model
         self.score_max = score_max       # метрика должна быть максимальной (например accuracy)
@@ -43,6 +51,7 @@ class Trainer:
 
         self.epoch      = 0              # текущая эпоха после вызова fit
         self.callbacks  = callbacks      # list of Callback instances to be called on events
+        self.wandb_cfg  = wandb_cfg      # wandb configuration
 
         self.data = Config(trn = data_trn,  val = data_val)
 
@@ -57,7 +66,7 @@ class Trainer:
         self.folders = Config(
             loss   = None,              # folder to save the best val loss models
             score  = None,              # folder to save the best val score models
-            points = None,              # folder to save checkpoints
+            point  = None,              # folder to save checkpoints
             prefix = "",                # add prefix to file name 
         )
 
@@ -157,6 +166,12 @@ class Trainer:
         )
         if model is not None:
             self.hist.params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            
+        if self.wandb_cfg:
+            self.wandb_init()
+        else:
+            self.wandb = None
+            
 
     #---------------------------------------------------------------------------
 
@@ -367,6 +382,8 @@ class Trainer:
 
     def mean(self, losses, scores, counts):
         """ Вычислить среднее по всей эпохе """
+        assert losses is not None, "Do you calculate loss at all?"
+
         loss  = ((losses.detach().cpu() * counts).sum(dim=0) / counts.sum()).item()
         if scores is not None:
             scores = ((scores.detach().cpu() * counts).sum(dim=0) / counts.sum())
@@ -407,6 +424,29 @@ class Trainer:
         c_unit_power = round(np.log10(c_unit), 0)
         return t_unit, t_unit_scale,  c_unit, c_unit_power
 
+        if pre_val and self.data.val is not None:
+            losses, scores, counts, (samples_val, steps_val, tm_val) = self.fit_epoch(0, self.model, self.data.val, train=False)
+            loss_val, score_val = self.mean(losses, scores, counts)
+            self.add_hist(self.hist.val, self.data.val.batch_size, samples_val, steps_val, tm_val, loss_val, score_val, self.scheduler.get_lr())
+            print()
+
+
+    #---------------------------------------------------------------------------
+
+    def validate(self, model=None, data=None):
+        """
+        Validate model without gradient computation.
+        The result is a dict with loss and score values.
+        Args:
+            * model - the model that makes the prediction (e.g. trainer.best.score_model)
+            * data - dataset for prediction (its minibatch format should understand the model's predict_step method)
+        """
+        model = model or self.model
+        data = data or self.data.val
+        losses, scores, counts, (samples_val, steps_val, tm_val) = self.fit_epoch(0, model, data, train=False)
+        loss_val, score_val = self.mean(losses, scores, counts)
+        return {'loss': loss_val, 'score': score_val.item()}
+    
     #---------------------------------------------------------------------------
 
     def predict(self, model, data, whole=False, batch_size=-1, n_batches=-1,  verbose:bool = True):
@@ -421,8 +461,10 @@ class Trainer:
             * n_batches - number of minibatches (if n_batches n_batches <= 0, then all)
             * verbose - display information about the calculation process
         """
+        model = model or self.model
+        
         for callback in self.callbacks:
-            callback.on_predict_start(self, self.model)
+            callback.on_predict_start(self, model)
 
         model.to(self.device)
         model.train(False)               # режим тестирование
@@ -447,12 +489,12 @@ class Trainer:
                 break
 
             for callback in self.callbacks:
-                batch = callback.on_predict_before_batch_transfer(self, self.model, batch, batch_id)
+                batch = callback.on_predict_before_batch_transfer(self, model, batch, batch_id)
 
             batch = self.to_device(batch)
 
             for callback in self.callbacks:
-                batch = callback.on_predict_after_batch_transfer(self, self.model, batch, batch_id)
+                batch = callback.on_predict_after_batch_transfer(self, model, batch, batch_id)
 
 
             if scaler is None:
@@ -486,16 +528,16 @@ class Trainer:
             res[k] = res[k].cpu()
 
         for callback in self.callbacks:
-            callback.on_predict_end(self, self.model)
+            callback.on_predict_end(self, model)
 
         return res
 
     #---------------------------------------------------------------------------
 
     def fit(self,  epochs=None,  samples=None,
-            period_plot:  int=100,  pre_val:bool=False, 
+            period_plot:  int=0,  pre_val:bool=False, 
             period_val:   int=1,  period_val_beg=1, val_beg:int = None,  
-            period_points:int=1,  points_start:int=1,
+            period_point: int=1,  point_start:int=1,
                       
             monitor = [],
             patience = None):        
@@ -506,7 +548,7 @@ class Trainer:
                 number of epochs for training (passes of one data_trn pack). If not defined (None) works "infinitely".
             samples (int):
                 if defined, then will stop after this number of samples, even if epochs has not ended
-            period_plot (int=100):
+            period_plot (int=0):
                 period after which the training plot is displayed (in epochs)
             pre_val (bool=False):
                 validate before starting training
@@ -516,12 +558,12 @@ class Trainer:
                 validation period on the first val_beg epochs
             val_beg (int=None):
                 the number of epochs from the start, after which the validation period will be equal to period_val.
-            period_points (int=1):
+            period_point (int=1):
                 period after which checkpoints  are made(in epochs)
-            points_start (int=1):
+            point_start (int=1):
                 period after fit runs will be saved checkpoints with period period_points (in epochs)
             monitor (list=[]):
-                what to save in folders: monitor=['loss'] or monitor=['loss', 'score', 'points']
+                what to save in folders: monitor=['loss'] or monitor=['loss', 'score', 'point']
             patience (int):
                 after how many epochs to stop if there was no better loss, but a better score during this time
 
@@ -536,6 +578,7 @@ class Trainer:
         """
         assert self.optim    is not None, "Define the optimizer first"
         assert self.data.trn is not None, "Define data.trn first"
+        assert len(self.data.trn) > 0,    "You don't have a single training batch!"
 
         for callback in self.callbacks:
             callback.on_fit_start(self, self.model)
@@ -550,9 +593,11 @@ class Trainer:
 
         self.epoch = 0
         if pre_val and self.data.val is not None:
+            assert len(self.data.val) > 0, "You don't have a single validation batch!"
             losses, scores, counts, (samples_val, steps_val, tm_val) = self.fit_epoch(0, self.model, self.data.val, train=False)
             loss_val, score_val = self.mean(losses, scores, counts)
             self.add_hist(self.hist.val, self.data.val.batch_size, samples_val, steps_val, tm_val, loss_val, score_val, self.scheduler.get_lr())
+            self.ext_hist(False, loss_val, score_val, self.scheduler.get_lr())
             print()
 
         epochs = epochs or 1_000_000_000
@@ -569,6 +614,7 @@ class Trainer:
             loss_trn, score_trn = self.mean(losses, scores, counts)
             lr = self.scheduler.get_lr()
             self.add_hist(self.hist.trn, self.data.trn.batch_size, samples_trn, steps_trn, tm_trn, loss_trn, score_trn, lr)
+            self.ext_hist(True, loss_trn, score_trn, lr)
 
             if self.hist.trn.best.loss is None or self.hist.trn.best.loss > loss_trn:
                 last_best = epoch
@@ -600,6 +646,7 @@ class Trainer:
                 losses, scores, counts, (samples_val,steps_val,tm_val) = self.fit_epoch(epoch, self.model, self.data.val, train=False)
                 loss_val, score_val = self.mean(losses, scores, counts)
                 self.add_hist(self.hist.val, self.data.val.batch_size, samples_val, steps_val, tm_val, loss_val, score_val, lr)
+                self.ext_hist(False, loss_val, score_val, lr)
 
                 # save best validation loss:
                 if self.hist.val.best.loss is None or self.hist.val.best.loss > loss_val:
@@ -633,12 +680,12 @@ class Trainer:
                         callback.on_after_plot(self, self.model)
                 self.stat()
 
-            if self.folders.points and 'points' in monitor and (period_points > 0 and points_start < self.hist.epochs and self.hist.epochs % period_points == 0 or epoch == epochs):
+            if self.folders.point and 'point' in monitor and (period_point > 0 and point_start < self.hist.epochs and self.hist.epochs % period_point == 0 or epoch == epochs):
                 for callback in self.callbacks:
                     callback.on_save_checkpoint(self, self.model, {})
                 score_val = score_val or [0]
                 score_trn = score_trn or [0]
-                self.save(Path(self.folders.points) / Path(self.folders.prefix + f"points_{self.now()}_score_val_{score_val[0]:.4f}_trn_{score_trn[0]:.4f}_loss_val_{loss_val}_trn_{loss_trn}.pt"), model=self.model, optim=self.optim)
+                self.save(Path(self.folders.point) / Path(self.folders.prefix + f"point_{self.now()}_score_val_{score_val[0]:.4f}_trn_{score_trn[0]:.4f}_loss_val_{loss_val}_trn_{loss_trn}.pt"), model=self.model, optim=self.optim)
 
             self.step_schedulers(1, samples_trn)
 
@@ -722,6 +769,12 @@ class Trainer:
                 hist.scores.append(score[0].item())
 
     #---------------------------------------------------------------------------
+                
+    def ext_hist(self, train, loss, score, lr):
+        pref = 'trn' if train else 'val'
+        self.wandb and self.wandb.log({f'{pref}_score': loss, f'{pref}_loss': loss, f'{pref}_lr': lr})
+
+    #---------------------------------------------------------------------------
 
     def save(self, fname, model = None, optim=None, info=""):
         try:
@@ -796,3 +849,27 @@ class Trainer:
         trainer.view(state['view'])
 
         return trainer
+        
+    #---------------------------------------------------------------------------
+
+    def wandb_init(self):        
+        import wandb
+        
+        assert hasattr(self.wandb_cfg, "api_key"), "Define api_key param for login to WANDB"
+        assert hasattr(self.wandb_cfg, "project_name"), "Define project_name param for attach current run to it"
+        
+        run_name = self.wandb_cfg.run_name if hasattr(self.wandb_cfg, "run_name") else None
+        
+        cfg = self.model.cfg if hasattr(self.model, "cfg") else Config()
+        
+        self.wandb = wandb
+        
+        self.wandb.login(key=self.wandb_cfg.api_key)
+        self.wandb.init(
+            # set the wandb project where this run will be logged
+            project=self.wandb_cfg.project_name,
+            name=run_name,
+            config=cfg,
+            #resume="must"
+        )
+        
