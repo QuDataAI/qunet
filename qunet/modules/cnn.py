@@ -26,14 +26,16 @@ class CNN(nn.Module):
                 stride of the convolutional kernel
             padding  (int=0 or list of ints):
                 padding around the image
-            batchnorm (int=0 or list):
-                BatchNorm2d for each layers after Conv2D
+            norm (int=0 or list):
+                0: no, 1: BatchNorm2d, 2: InstanceNorm2d, for each layers after Conv2D: 0
             pool_ker (int=0 or list of ints):
                 max-pooling kernel
             pool_str (int=0 or list of ints):
                 stride of max-pooling kernel
             drop     (float=0.0 or list of floats):
                 dropout after each layer
+            drop_d   (int or list of ints)
+                1: Dropout, 2: Dropout2d
 
         Example:
         ------------
@@ -58,11 +60,12 @@ class CNN(nn.Module):
             channel  = None,       # number of channels in each layer
             kernel   = 3,          # int or list: size of the convolutional kernel
             stride   = 1,          # int or list: stride of the convolutional kernel
-            batchnorm = 0,         # int or list: BatchNorm2d for each layers
+            norm     = 0,          # 0: no, 1: BatchNorm2d, 2: InstanceNorm2d, for each layers after Conv2D
             padding  = 0,          # int or list: padding around the image
             pool_ker = 0,          # int or list: max-pooling kernel
             pool_str = 0,          # int or list: stride of max-pooling kernel (if 0, then =pool_ker)
-            drop     = 0,          # int or list: dropout after each layer
+            drop     = 0,          # int or list: dropout after each layer (ReLU)
+            drop_d   = 1,          # int or list: 1: Dropout, 2: Dropout2d
         ))
 
     #---------------------------------------------------------------------------
@@ -81,14 +84,16 @@ class CNN(nn.Module):
         assert type(cfg.channel) == list, f"CNN: You must define channel (int or list of int): {cfg.channel}"
 
         n = len(cfg.channel)
-        if type(cfg.drop)      == int:   cfg.drop      = [cfg.drop]      * n
-        if type(cfg.kernel)    == int:   cfg.kernel    = [cfg.kernel]    * n
-        if type(cfg.stride)    == int:   cfg.stride    = [cfg.stride]    * n
-        if type(cfg.padding)   == int:   cfg.padding   = [cfg.padding]   * n
-        if type(cfg.pool_ker)  == int:   cfg.pool_ker  = [cfg.pool_ker]  * n
-        if type(cfg.pool_str)  == int:   cfg.pool_str  = [cfg.pool_str]  * n
-        if type(cfg.batchnorm) == int:   cfg.batchnorm = [cfg.batchnorm] * n
-        if type(cfg.drop)      == float or type(cfg.drop) == int: cfg.drop = [cfg.drop] * n
+        if type(cfg.drop)      == int:    cfg.drop      = [cfg.drop]      * n
+        if type(cfg.kernel)    == int:    cfg.kernel    = [cfg.kernel]    * n
+        if type(cfg.stride)    == int:    cfg.stride    = [cfg.stride]    * n
+        if type(cfg.padding)   == int:    cfg.padding   = [cfg.padding]   * n
+        if type(cfg.pool_ker)  == int:    cfg.pool_ker  = [cfg.pool_ker]  * n
+        if type(cfg.pool_str)  == int:    cfg.pool_str  = [cfg.pool_str]  * n
+        if type(cfg.norm)      == int:    cfg.norm      = [cfg.norm]      * n
+        if type(cfg.drop_d)    == int:    cfg.drop_d    = [cfg.drop_d]    * n
+        if type(cfg.drop) in (float,int): cfg.drop      = [cfg.drop]      * n
+
 
     #---------------------------------------------------------------------------
 
@@ -105,8 +110,11 @@ class CNN(nn.Module):
             pool_str = pool_str if pool_str else pool_ker
 
             layers +=  [ nn.Conv2d(channels[i], channels[i+1], kernel_size=kernel, stride=stride, padding=padding) ]
-            if cfg.batchnorm[i] > 0:
+            if  cfg.norm[i] == 1:
                 layers += [ nn.BatchNorm2d( channels[i+1] ) ]
+            elif cfg.norm[i] == 2:
+                layers += [ nn.InstanceNorm2d( channels[i+1] ) ]
+
             layers +=  [ nn.ReLU()]
 
             if h: h = int( (h + 2*padding - kernel) / stride + 1)
@@ -117,7 +125,10 @@ class CNN(nn.Module):
                 if h: h = int( (h - pool_ker) / pool_str + 1)
                 if w: w = int( (w - pool_ker) / pool_str + 1)
 
-            layers += [ nn.Dropout(p=cfg.drop[i]) ]
+            if cfg.drop_d[i] == 1:
+                layers += [ nn.Dropout(p=cfg.drop[i]) ]
+            elif cfg.drop_d[i] == 2:
+                layers += [ nn.Dropout(p=cfg.drop[i]) ]
 
         cfg.output =  (channels[-1], w, h)
         self.layers =  nn.Sequential(*layers)
@@ -133,13 +144,33 @@ class CNN(nn.Module):
         if not r1:
             print(f"!! CNN: y.shape={y.shape[1:]} != cfg.output={cnn.cfg.output}")
 
-        cnn = CNN(input=(1,None,None), channel=[3, 7], batchnorm=1)
+        cnn = CNN(input=(1,None,None), channel=[3, 7], norm=1)
         x = torch.rand(B,1,H,W)
         y = cnn(x)
 
         if r1:
             print(f"ok CNN, output = {cnn.cfg.output}")
-        return r1
+
+        cnn = CNN(
+            input   = (1,28,28),
+            channel  =[16,32,64,128],
+            kernel  = [8,3,2,4],
+            pool_ker= [2,2,0,0],
+            padding = [1,1,3,0],
+            drop    = [0.3, 0.3, 0.4, 0.5],
+            norm    = [1,1,0,0]
+        )
+
+        B,C,H,W = 1, 1, 27,28
+        x = torch.rand(B,C,H,W)
+        y = cnn(x)
+        r2 = y.shape[1:] == cnn.cfg.output
+        print(y.shape, cnn.cfg.output)
+        if not r2:
+            print(f"!! CNN: y.shape={y.shape[1:]} != cfg.output={cnn.cfg.output}")
+
+
+        return r1 and r2
 
 #===============================================================================
 
@@ -390,6 +421,7 @@ class ResCNN(nn.Module):
             print(f"!! ResCNN: y.shape={y.shape[1:]} != cfg.output={cnn.cfg.output}")
         if r1:
             print(f"ok ResCNN, output = {cnn.cfg.output}")
+
         return r1
 
 

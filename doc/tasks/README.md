@@ -1,7 +1,7 @@
-# QuNet - Tasks
+# QuNet - Tasks of the week
 
-| [Linear Regression](#linear-regression) | [Tensor contraction](#tensor-contraction) |
-| ---- | ---  |
+| * [Linear Regression](#linear-regression) | * [Tensor contraction](#tensor-contraction) | * [Logit](#logit) |
+| ---- | ---  | ---  |
 
 
 
@@ -20,7 +20,10 @@ loss = (Y_pred-Y).pow(2).mean()
 ```
 Where is the mistake made and why does it lead to an incorrect result?
 
-Little hint:
+<details>
+
+<b>Little hint</b>:
+
 ```python
 model = nn.Linear(2,1, bias=False)
 model.weight.data=torch.ones(1,2)
@@ -30,9 +33,10 @@ loss = (Y_pred-Y).pow(2).mean()
 
 print(loss.detach()) # ?????
 ```
+</details>
 
 <details>
-<b>Answer</b> :
+<b>Answer</b>:
 We need to change the shape of the target in the training data:
 
 ```python
@@ -80,7 +84,10 @@ X = torch.rand(2,3)
 Y = torch.rand(3,4,5)
 Z = f(X,Y)              # (2,4,5)
 ```
-</details>
+
+<details>
+<b>Answer</b> :
+
 ```python
 # 1.
 torch.einsum('ij,jkl->ikl', X, Y)
@@ -91,3 +98,26 @@ torch.tensordot(X, Y, dims=([1],[0]) )
 # 4.
 ( X @ Y.permute(1,0,2) ).permute(1,0,2) 
 ```
+
+</details>
+
+<hr>
+
+## Logit
+
+Why do we call the output of the classification layer <b>logit</b>?
+
+<details>
+
+<b>Answer</b>:
+Mathematicians call the logit - logarithm of the ratio of the probability of the possibility of an event to the probability of its impossibility: 
+$$
+\text{logit} = \log\frac{p}{1-p}.
+$$ 
+Therefore, the probability is equal to the sigmoid of the output of the neural network: $y=\text{logit}$
+$$
+p = \sigma(y) = \frac{1}{1+e^{-y}}.
+$$
+
+
+</details>
