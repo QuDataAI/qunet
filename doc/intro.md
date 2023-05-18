@@ -1,14 +1,15 @@
 # [QuNet](README.md) - Quick start
 
-## Install
+## Before the beginning
+
+This document is an introduction to the QuNet library.
+First of all, it needs to intal:
 
 ```
 pip install qunet
 ```
-<hr>
 
-
-## Import
+Then we import the required modules from it:
 
 ```python
 import torch, torch.nn as nn
@@ -16,6 +17,10 @@ import matplotlib.pyplot as plt
 
 from qunet import  Data, MLP, Trainer, Callback
 ```
+
+Let's consider a simple deep learning task using QuNet.
+
+<hr>
 
 ## Toy dataste
 
@@ -156,12 +161,25 @@ As a result, images similar to this will be displayed:
 Schedulers allow you to control the learning process by changing the learning rate according to the required algorithm.
 There can be one or more schedulers. In the latter case, they are processed sequentially one after another.
 
-Выше, при добавлении оптимизатора `Adam`, ему была задана фиксированная скорость обучения `lr=1e-3`.
-Будем её динамически изменять в процессе обучения. Для этого перед вызовом `fit` функции создадим шедулер и добавим его к тренеру:
+Above, when the `Adam` optimizer was added, it was given a fixed learning rate of `lr=1e-3`.
+We will dynamically change it in the learning process. 
+To do this, before calling the `fit` function, create a scheduler and add it to the trainer:
 
+```python
+trainer.set_scheduler( Scheduler_Cos  (lr1=1e-3, lr_hot=1e-2, lr2=1e-3, epochs=10, warmup=5) )
+trainer.fit(500, period_plot=100)
+```
+
+Now the learning rate starts at `lr1=1e-3`.
+During `warmup` epochs, it "warms up" linearly to the value `lr_hot=1e-2`.
+Then during `epochs` it decreases to the value `lr2=1e-3` according to the "cosine law".
+
+You can use a sequence of multiple schedulers.
+More like this is described in [here](schedules.md).
 Example of learning curves of various schedulers:
 
 <img src="img/schedulers.png">
+
 
 <hr>
 
@@ -174,15 +192,19 @@ To do this, you need to enable `train.best.copy` and specify the target value fo
 ```python
 trainer.best(copy=True)
 trainer.fit(epochs=200, monitor=['score'])
-trainer.save("best_score.pt", trainer.best.score_model)
 ```
-The last best model will be in `trainer.best.loss_model` and `trainer.best.score_model`.
+The last best model will be in  `trainer.best.score_model` or `trainer.best.loss_model`.
 The values of the corresponding metrics are in `trainer.best.loss` and `trainer.best.score`.
 These models can be used to roll back if something went wrong:
 ```python
 trainer.model = copy.deepcopy(trainer.best.score_model)   
 ```
-To save the best models by loss and/or score on disk, you need to set folders.
+You can also save the best model to disk yourself:
+```python
+trainer.save("best_score.pt", trainer.best.score_model)
+```
+
+To automatically save the best models by loss and/or score on disk, you need to set folders.
 Saving will occur if you specify `monitor` in `fit`:
 ```python
 trainer.folders(loss='log/loss', score='log/loss',  point='log/checkpoints')
