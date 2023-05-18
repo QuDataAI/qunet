@@ -128,7 +128,7 @@ class CNN(nn.Module):
             if cfg.drop_d[i] == 1:
                 layers += [ nn.Dropout(p=cfg.drop[i]) ]
             elif cfg.drop_d[i] == 2:
-                layers += [ nn.Dropout(p=cfg.drop[i]) ]
+                layers += [ nn.Dropout2d(p=cfg.drop[i]) ]
 
         cfg.output =  (channels[-1], w, h)
         self.layers =  nn.Sequential(*layers)
