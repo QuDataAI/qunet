@@ -1,7 +1,8 @@
 ﻿import copy
 import torch, torch.nn as nn
 
-from ..utils   import Config
+from ..utils import Config
+from .total  import get_activation
 #========================================================================================
 
 class CNN(nn.Module):
@@ -36,6 +37,9 @@ class CNN(nn.Module):
                 dropout after each layer
             drop_d   (int or list of ints)
                 1: Dropout, 2: Dropout2d
+            fun (str='relu'):
+                activation function: gelu, relu, sigmoid, tanh, relu6, swish, hswish, hsigmoid
+
 
         Example:
         ------------
@@ -66,6 +70,7 @@ class CNN(nn.Module):
             pool_str = 0,          # int or list: stride of max-pooling kernel (if 0, then =pool_ker)
             drop     = 0,          # int or list: dropout after each layer (ReLU)
             drop_d   = 1,          # int or list: 1: Dropout, 2: Dropout2d
+            fun      = 'relu',     # activation function: gelu, relu, sigmoid, tanh, relu6, swish, hswish, hsigmoid      
         ))
 
     #---------------------------------------------------------------------------
@@ -115,7 +120,7 @@ class CNN(nn.Module):
             elif cfg.norm[i] == 2:
                 layers += [ nn.InstanceNorm2d( channels[i+1] ) ]
 
-            layers +=  [ nn.ReLU()]
+            layers +=  [ get_activation(self.cfg.fun) ]
 
             if h: h = int( (h + 2*padding - kernel) / stride + 1)
             if w: w = int( (w + 2*padding - kernel) / stride + 1)
@@ -201,6 +206,12 @@ class ResBlockCNN(nn.Module):
             batchnorm    (bool=True):
             bias         (bool=False)
             skip          (int=0)
+            drop         (float=0.0):
+                dropout rate after block
+            drop_d       (int=1):
+                dropout dim  1:Dropout, 2: Dropout2d
+            fun (str='relu'):
+                activation function: gelu, relu, sigmoid, tanh, relu6, swish, hswish, hsigmoid
 
         """
         super().__init__()
@@ -215,14 +226,16 @@ class ResBlockCNN(nn.Module):
             in_channels  = None,   # input tensor shape:: (channels, height, width)
             out_channels = None,   # output tensor shape;  sets in create()
             n_layers = 2,          # number of Conv2D layers in each ResBlockCNN block
-            skip     = 0,          # kind of skip-connection in each ResBlockCNN block = 0,1,2
+            skip     = 1,          # kind of skip-connection in each ResBlockCNN block = 0,1,2
             kernel   = 3,          # size of the convolutional kernel
             stride   = 1,          # stride of the convolutional kernel
             padding  = 0,          # padding around the image
-            mode      = 'zeros',   # kind of padding
-            batchnorm = 0,         # BatchNorm2d for each layers
-            drop     = 0,          # dropout after each layer
-            bias      = False,
+            mode     = 'zeros',    # kind of padding
+            norm     = 0,          # 0: none, 1: BatchNorm2d 2: InstanceNorm2d  for each layers
+            drop     = 0.0,        # dropout after output
+            drop_d   = 1,          # 1: Dropout, 2: Dropout2d
+            bias     = False,
+            fun      = 'relu',     # activation function: gelu, relu, sigmoid, tanh, relu6, swish, hswish, hsigmoid      
         ))
 
     #---------------------------------------------------------------------------
@@ -230,12 +243,9 @@ class ResBlockCNN(nn.Module):
     def forward(self, x):
         y = self.block(x)
         if self.align is not None:
-            y2 = self.align(x)
-            if self.batchnorm is not None:
-                y2 = self.batchnorm(y2)
-            y += y2
-
-        y = self.relu(y)
+            y = self.norm( y + self.align(x) )
+        y = self.out_fun(y)
+        y = self.drop(y)
         return y
 
     #---------------------------------------------------------------------------
@@ -246,42 +256,59 @@ class ResBlockCNN(nn.Module):
         channels = [cfg.in_channels] + [cfg.out_channels]*cfg.n_layers
         padding  = cfg.kernel // 2
         for i in range(len(channels)-1):
-            layers += [ nn.Conv2d(in_channels=channels[i], out_channels=channels[i+1],
-                                  kernel_size=cfg.kernel,
-                                  padding=padding, padding_mode=cfg.mode,
-                                  stride=cfg.stride if i==0 else 1,  bias=cfg.bias) ]
-            if cfg.batchnorm:
-                layers += [ nn.BatchNorm2d(channels[i+1]) ]
+            layers += [ nn.Conv2d(in_channels  = channels[i], 
+                                  out_channels = channels[i+1],
+                                  kernel_size  = cfg.kernel,
+                                  padding = padding, padding_mode = cfg.mode,
+                                  stride = cfg.stride if i==0 else 1, 
+                                  bias=cfg.bias) ]
+
+            if  cfg.norm == 1:
+                layers += [ nn.BatchNorm2d( channels[i+1] ) ]
+            elif cfg.norm == 2:
+                layers += [ nn.InstanceNorm2d( channels[i+1] ) ]
+
             if i < len(channels)-2:
-                layers += [ nn.ReLU(inplace=True) ]
+                layers += [ get_activation(cfg.fun)  ]
 
         self.block = nn.Sequential(*layers)
 
-        assert cfg.skip in [0,1,2], "Error: wrong kind of residual !!!"
-        self.batchnorm = None
-        if  cfg.skip == 0:
-            self.align = None
+        assert cfg.skip in [0,1,2], "Error: wrong kind of residual !!!"                
+        if cfg.skip == 2 or cfg.in_channels != cfg.out_channels: # надо выравнивать по любому!
+            self.align = nn.Conv2d(cfg.in_channels, cfg.out_channels, 
+                                   kernel_size=1,  stride=cfg.stride, bias=cfg.bias)
         elif cfg.skip == 1:
             self.align = nn.Identity()
-        elif cfg.skip == 2:                                       # !
-            self.align     = nn.Conv2d(cfg.in_channels, cfg.out_channels, kernel_size=1,  stride=cfg.stride, bias=cfg.bias)
-            self.batchnorm = nn.BatchNorm2d(cfg.out_channels) if cfg.batchnorm else None
+        elif  cfg.skip == 0:
+            self.align = None
 
-        self.relu = nn.ReLU()   # after skip connection
+        if   cfg.norm == 2:
+            self.norm =  nn.InstanceNorm2d( cfg.out_channels )
+        elif cfg.norm == 1:
+            self.norm =  nn.BatchNorm2d( cfg.out_channels )
+        else:
+            self.norm = nn.Identity()
+
+        self.out_fun = get_activation(cfg.fun)   # after skip connection
+                    
+        if cfg.drop_d == 2:
+            self.drop = nn.Dropout2d(p=cfg.drop)
+        else:
+            self.drop = nn.Dropout(p=cfg.drop)
 
 #===============================================================================
 
 class ResCNN(nn.Module):
     def __init__(self,  *args, **kvargs) -> None:
         """
-        ResCNN состоит из последовательности ResBlockCNN блоков
-        Каждый блок состит из однотипных Conv2D слоёв (обычно двух).
-        Размер изображения после ResBlockCNN не изменяется (может поменяться только число каналов)
-
-        Слои Conv2D блока окружены skip-connections. Они могут быть следующих типов:
-            * skip = 0: отсутствуют (редко)
-            * skip = 1: простая сумма входа в блок с выходом из последней коволюции (необходимо, чтобы in_channels==out_channels)
-            * skip = 2: вход пропускается через Conv2D с единичным ядром для выраванивания числа входных и выходных каналов (в этом случае можно in_channels != out_channels)
+        ResCNN consists of a sequence of ResBlockCNN blocks
+        Each block consists of the same type of Conv2D layers (usually two).
+        Image size does not change after ResBlockCNN (only the number of channels can change)
+        
+        A skip-connection bypasses the block's Conv2D layer. They can be of the following types:
+            * skip = 0: no skip-connection (rare)
+            * skip = 1: x + F(x): simple sum of input to block with output from last covolution (required that in_channels==out_channels)
+            * skip = 2: L(x)+F(x): the input is passed through Conv2D with a single core to equalize the number of input and output channels (in this case, you can in_channels != out_channels)
 
         Args
         ------------
@@ -301,16 +328,33 @@ class ResCNN(nn.Module):
                 padding around the image
             mode       (str='zeros' or list)
                 kind of padding
-            batchnorm  (int=0 or list):
-                BatchNorm2d for each layers
+
+            norm (int=0 or list):
+                0: no, 1: BatchNorm2d, 2: InstanceNorm2d, for each layers after Conv2D: 0
+            drop       (float=0.0 or list):
+                dropout rate after each block
+            drop_d       (int=1):
+                dropout dim after each block  1:Dropout, 2: Dropout2d
+
             pool_ker   (int=0, or list):
                 max-pooling kernel
             pool_str   (int=0 or list):
-                stride of max-pooling kernel (if 0, then = pool_ker)
-            drop       (float=0.0 or list):
-                dropout after each layer
+                stride of max-pooling kernel (if 0, then = pool_ker)                            
+
             bias       (bool=False or list):
+
+            fun (str='relu'):
+                activation function: gelu, relu, sigmoid, tanh, relu6, swish, hswish, hsigmoid
             averpool   (bool=False)
+
+        Example
+        ------------
+        B,C,H,W = 1, 3, 64,32
+        cnn = ResCNN(   input=(C,H,W), 
+                        channel=[8, 8, 16],
+                        skip  = [2, 1, 2] )
+        x = torch.rand(B,C,H,W)
+        y = cnn(x)
         """
         super().__init__()
         self.cfg = ResCNN.default()
@@ -329,13 +373,15 @@ class ResCNN(nn.Module):
             kernel   = 3,          # int or list: size of the convolutional kernel
             stride   = 1,          # int or list: stride of the convolutional kernel
             padding  = 0,          # int or list: padding around the image
-            mode      = 'zeros',   # kind of padding
-            batchnorm = 0,         # int or list: BatchNorm2d for each layers
+            mode     = 'zeros',   # kind of padding
+            norm     = 0,              # int or list: BatchNorm2d for each layers
             pool_ker = 0,          # int or list: max-pooling kernel
             pool_str = 0,          # int or list: stride of max-pooling kernel (if 0, then =pool_ker)
             drop     = 0,          # int or list: dropout after each layer
-            bias      = False,
-            averpool  = False,
+            drop_d   = 0,
+            bias     = False,
+            fun      = 'relu',     # activation function: gelu, relu, sigmoid, tanh, relu6, swish, hswish, hsigmoid      
+            averpool = False,
         ))
 
     #---------------------------------------------------------------------------
@@ -360,15 +406,19 @@ class ResCNN(nn.Module):
         self.set_lists()
         channels = [cfg.input[0]] + cfg.channel
         self.layers = []
-        for i in range(len(channels)-1):
-            if channels[i] != channels[i+1] and cfg.skip[i] > 0:
-                cfg.skip[i] = 2
-
-            self.layers +=  [ ResBlockCNN(in_channels=channels[i], out_channels=channels[i+1], kernel=cfg.kernel[i],
-                                          skip=cfg.skip[i], n_layers=cfg.layer[i], stride=cfg.stride[i],
-                                          mode=cfg.mode, batchnorm=cfg.batchnorm, bias=cfg.bias)  ]
+        for i in range(len(channels)-1):            
+            self.layers +=  [ ResBlockCNN(in_channels=channels[i], 
+                                          out_channels=channels[i+1], 
+                                          kernel=cfg.kernel[i],
+                                          skip=cfg.skip[i], n_layers=cfg.layer[i], 
+                                          stride=cfg.stride[i],
+                                          mode=cfg.mode, norm=cfg.norm, bias=cfg.bias,
+                                          drop=cfg.drop, drop_d = cfg.drop_d,
+                                        )  
+                            ]
             if cfg.pool_ker[i] > 1:
-                self.layers += [ nn.MaxPool2d(kernel_size = cfg.pool_ker[i], stride = cfg.pool_ker[i]) ]
+                self.layers += [ nn.MaxPool2d(kernel_size = cfg.pool_ker[i], 
+                                              stride      = cfg.pool_ker[i]) ]
 
         if cfg.averpool:
             self.layers += [ nn.AdaptiveAvgPool2d((1, 1)) ]
@@ -413,9 +463,12 @@ class ResCNN(nn.Module):
 
     def unit_test():
         B,C,H,W = 1, 3, 64,32
-        cnn = ResCNN(input=(C,H,W), channel=[5, 7])
+        cnn = ResCNN(   input=(C,H,W), 
+                        channel=[8, 8, 16],
+                        skip  = [2, 1, 2] )
         x = torch.rand(B,C,H,W)
         y = cnn(x)
+
         r1 = y.shape[1:] == cnn.cfg.output
         if not r1:
             print(f"!! ResCNN: y.shape={y.shape[1:]} != cfg.output={cnn.cfg.output}")
@@ -424,5 +477,46 @@ class ResCNN(nn.Module):
 
         return r1
 
+
+#===============================================================================
+
+class SEBlock(nn.Module):
+    """
+    Squeeze-and-Excitation block from 'Squeeze-and-Excitation Networks,' https://arxiv.org/abs/1709.01507.
+    From: https://github.com/osmr/imgclsmob/blob/68335927ba27f2356093b985bada0bc3989836b1/pytorch/pytorchcv/models/common.py#L731
+
+    Parameters:
+    ----------
+    channels : int
+        Number of channels.
+    reduction : int, default 16
+        Squeeze reduction value.
+    approx_sigmoid : bool, default False
+        Whether to use approximated sigmoid function.
+    activation : function, or str, or nn.Module
+        Activation function or name of activation function.
+    """
+    def __init__(self,
+                 channels,
+                 reduction=16,
+                 approx_sigmoid=False,
+                 activation=(lambda: nn.ReLU(inplace=True))):
+        super(SEBlock, self).__init__()
+        mid_cannels = channels // reduction
+
+        self.pool = nn.AdaptiveAvgPool2d(output_size=1)
+        self.conv1 =  nn.Conv2d(in_channels=channels, out_channels=mid_cannels, kernel_size=1, stride=1, bias=True)
+        self.activ = get_activation(activation)
+        self.conv2 = nn.Conv2d(in_channels=mid_cannels, out_channels=channels, kernel_size=1, stride=1, bias=True)
+        self.sigmoid = get_activation("hsigmoid") if approx_sigmoid else nn.Sigmoid()
+
+    def forward(self, x):
+        w = self.pool(x)
+        w = self.conv1(w)
+        w = self.activ(w)
+        w = self.conv2(w)
+        w = self.sigmoid(w)
+        x = x * w
+        return x
 
 #===============================================================================

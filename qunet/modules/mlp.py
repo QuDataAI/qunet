@@ -2,6 +2,7 @@
 import torch, torch.nn as nn
 
 from ..utils   import Config
+from .total  import get_activation
 
 #========================================================================================
 
@@ -22,7 +23,7 @@ class MLP(nn.Module):
             stretch (int = 4):
                 if there is, then hidden = int(stretch*input)
             fun (str='gelu'):
-                activation function: gelu, relu, sigmoid, tanh
+                activation function: gelu, relu, sigmoid, tanh, relu6, swish, hswish, hsigmoid
             drop  (float:0.0):
                 dropout at the output of the hidden layer
 
@@ -87,7 +88,7 @@ class MLP(nn.Module):
             else:
                 self.neurons = [cfg.input, cfg.hidden, cfg.output]
 
-        if cfg.fun not in ['gelu', 'relu', 'sigmoid', 'tanh']:
+        if cfg.fun not in ['gelu', 'relu', 'sigmoid', 'tanh', 'relu6', 'swish', 'hswish', 'hsigmoid']:
             print(f"MLP warning: unknown activation function {cfg.fun}, set to gelu")
             cfg.fun  = 'gelu'
 
@@ -99,11 +100,8 @@ class MLP(nn.Module):
         for i in range (1, len(self.neurons)):
             seq += [ nn.Linear(self.neurons[i-1],  self.neurons[i]) ]
             if i+1 < len(self.neurons):
-                if   self.cfg.fun == 'gelu':    seq += [ nn.GELU() ]
-                elif self.cfg.fun == 'relu':    seq += [ nn.ReLU() ]
-                elif self.cfg.fun == 'sigmoid': seq += [ nn.Sigmoid() ]
-                elif self.cfg.fun == 'tanh':    seq += [ nn.Tanh() ]
-                seq += [ nn.Dropout(self.cfg.drop) ]
+                seq += [get_activation(self.cfg.fun),
+                        nn.Dropout(self.cfg.drop)     ]                
         self.layers = nn.Sequential(*seq)
 
     #---------------------------------------------------------------------------

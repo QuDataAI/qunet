@@ -3,7 +3,7 @@
 ## Before the beginning
 
 This document is an introduction to the QuNet library.
-First of all, it needs to intal:
+First of all, needs to install it:
 
 ```
 pip install qunet
@@ -19,15 +19,16 @@ from qunet import  Data, MLP, Trainer, Callback
 ```
 
 Let's consider a simple deep learning task using QuNet.
+The code below can be found in the notebook [QuNet-Binary_classification](https://colab.research.google.com/drive/1orV9l8T7Rrqos9SZMkwvFWnur1iISZsj?usp=sharing).
 
 <hr>
 
-## Toy dataste
+## Toy dataset
 
 Consider a two-dimensional feature space. 
 Let there be objects of two kinds (binary classification task).
-Let's generate N=1200 objects and  draw their position X in the feature space.
-With binary classification, target Y values must be float and have the shape (N,1).
+Let's generate N=1200 objects.
+With binary classification, target Y values must be float type and have the shape (N,1).
 The output of the neural network will have the same shape.
 
 ```python
@@ -35,7 +36,11 @@ N = 1200
 X = 2*torch.rand(N, 2) - 1              # [-1...1]^2
 Y = torch.sum(X**2, axis=1) < 0.5       # inside or outside circle
 Y = Y.float().view(-1,1)                # float and shape (N,1) for MSE or BCELoss, not (N,) !!!
+```
 
+ Draw the position  X  of objects in the feature space:
+
+```python
 fig = plt.figure(figsize=(4,4))
 plt.scatter(X[:,0], X[:,1], c=Y, s=3, cmap="bwr")
 plt.grid(ls=":")
@@ -47,15 +52,16 @@ The result will be something similar to this figure:
 </center>
 
 Then we use class `Data` - data loader from the `QuNet` library.
-All data will be divided into training (`data_trn`) and validation ('data_val') sets.
+All data will be divided into training (`data_trn`) and validation (`data_val`) sets.
 Training data will be shuffled before each epoch (`shuffle=True`)
 ```python
-n_trn = int(n_samples*0.8)
+n_trn = int(N*0.8)
 data_trn = Data( (X[:n_trn], Y[:n_trn]), batch_size=128, shuffle=True)
 data_val = Data( (X[n_trn:], Y[n_trn:]), batch_size=256 )
 ```
-Note that the   constructor of class `Data` is passed a tuple (or list) of the data needed for training. In our case, it is `(X, Y)`. In the same sequence, these data will be present in each batch. The batch size `batch_size` can be changed later by simply assigning `data_trn.btach_size = 64`
+Note that the   constructor of class `Data` is passed a tuple (or list) of the data needed for training. In our case, it is `(X, Y)`. In the same sequence, these data will be present in each batch. The batch size `batch_size` can be changed later by simply assigning `data_trn.batch_size = 64`.
 
+<hr>
 
 ## Create Model
 
@@ -90,9 +96,9 @@ model = Model()
 ```
 
 In addition to forward, you should additionally define some methods that the trainer uses. 
-At a minimum, this should be the `training_step` method.
-It accepts a batch of examples as input, consisting of a pair of `x` (model input) and `y` (target value = 0 or 1).
-The output should be a dictionary containing an 'loss' (it will be minimized). If desired, you can return 'score' with various quality indicators of the model (below, there is only one such indicator - accuracy).
+At a minimum, this should be the `training_step` function.
+It accepts a batch of examples as input, consisting of a pair of `x` (model input) and `y_true` (target or true value = 0 or 1).
+The output  of fuction should be a dictionary containing an 'loss' (it will be minimized). If desired, you can return 'score' with various quality indicators of the model (below, there is only one such indicator - accuracy).
 
 <hr>
 
@@ -115,8 +121,9 @@ In particular, the parameter `period_plot = 100` means that every 100 epochs the
 </center>
 
 The points on this plot are the last top 100 local validation metrics and loss.
-<hr>
+The number in square brackets is the epoch at which the best score (on the left plot) and loss (on the right plot) were obtained.
 
+<hr>
 
 ## Callback
 
@@ -155,7 +162,6 @@ As a result, images similar to this will be displayed:
 
 <hr>
 
-
 ## Using Schedules
 
 Schedulers allow you to control the learning process by changing the learning rate according to the required algorithm.
@@ -166,11 +172,11 @@ We will dynamically change it in the learning process.
 To do this, before calling the `fit` function, create a scheduler and add it to the trainer:
 
 ```python
-trainer.set_scheduler( Scheduler_Cos  (lr1=1e-3, lr_hot=1e-2, lr2=1e-3, epochs=10, warmup=5) )
+trainer.set_scheduler( Scheduler_Cos(lr1=1e-4, lr_hot=1e-2, lr2=1e-3, epochs=200, warmup=50) )
 trainer.fit(500, period_plot=100)
 ```
 
-Now the learning rate starts at `lr1=1e-3`.
+Now the learning rate starts at `lr1=1e-4`.
 During `warmup` epochs, it "warms up" linearly to the value `lr_hot=1e-2`.
 Then during `epochs` it decreases to the value `lr2=1e-3` according to the "cosine law".
 
@@ -179,7 +185,6 @@ More like this is described in [here](schedules.md).
 Example of learning curves of various schedulers:
 
 <img src="img/schedulers.png">
-
 
 <hr>
 
@@ -207,14 +212,17 @@ trainer.save("best_score.pt", trainer.best.score_model)
 To automatically save the best models by loss and/or score on disk, you need to set folders.
 Saving will occur if you specify `monitor` in `fit`:
 ```python
-trainer.folders(loss='log/loss', score='log/loss',  point='log/checkpoints')
-trainer.fit(epochs=200, monitor=['score', 'loss', 'point'], period_point=10)
+trainer.folders(loss='log/loss', score='log/score',  point='log/checkpoints', prefix="01")
+trainer.fit(epochs=200, monitor=['score', 'loss', 'point'], period_point=50)
 ```
 The best model by score and loss will be saved each time a new best value is reached.
 Checkpoints (`point`) are simply saving the current state of the model.
 They can be done with the desired periodicity in epochs (period_point=1 by default).
+The `prefix` string will be prepended to the name of each file.
+For example, it could be the number of the experiment with the given hyperparameters.
 
 The best score is the metric of the first element in the score.
 If `trainer.score_max=True`, then the higher the score, the better (for example, accuracy).
+
 <hr>
 
