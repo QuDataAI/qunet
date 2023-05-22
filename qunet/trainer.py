@@ -87,10 +87,11 @@ class Trainer:
             x_max = None,              # maximum value in samples on the x-axis (if None - last)
             smooth = Config(
                 count  = 200,          # if the number of points exceeds count - draw a smooth line
-                kern   = 50,           # averaging kernel (how many points are averaged)
+                kern   = 51,           # averaging kernel (how many points are averaged)
                 stride = 1,            # averaging step
                 width  = 1.5,          # line thickness
                 alpha  = 0.5,          # source data transparency
+                num    = 10,           # number of last points for "extrapolation"
             ),
             loss = Config(
                 show  = True,          # show loss subplot
@@ -820,7 +821,12 @@ class Trainer:
 
     #---------------------------------------------------------------------------
 
-    def load(fname, ClassModel):
+    def resume(self, fname):
+        Trainer.load(fname, None, self)
+
+    #---------------------------------------------------------------------------
+
+    def load(fname, ClassModel, trainer=None):
         """
         Static method of created trainer with loaded model.
 
@@ -853,15 +859,16 @@ class Trainer:
             print(f"Cannot open file: '{fname}'")
             return None
 
-
         assert type(state) == dict,  f"Apparently this model was not saved by the trainer: state:{type(state)}"
         assert 'model'  in state,    f"Apparently this model was not saved by the trainer: no 'model' in state: {list(state.keys())}"
         assert 'config' in state,    f"Apparently this model was not saved by the trainer: no 'config' in state: {list(state.keys())}"
 
-        trainer = Trainer(None, None)
+        trainer = trainer or Trainer(None, None)
 
         if ClassModel is not None:
             trainer.model = ClassModel(state['config'])
+
+        if trainer.model is not None:
             trainer.model.load_state_dict(state['model'])
 
         if 'optim_state' in state and 'optim' in state:
@@ -872,7 +879,7 @@ class Trainer:
             elif state['optim'] == torch.optim.AdamW:
                 trainer.optim  = torch.optim.AdamW(trainer.model.parameters(), lr=1e-5)
 
-            if trainer.optim is not None:
+            if trainer.optim is not None and 'optim_state' in state and state['optim_state'] is not None:
                 trainer.optim.load_state_dict(state['optim_state'])
 
         trainer.hist(state['hist'])

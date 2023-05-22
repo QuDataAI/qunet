@@ -1,5 +1,26 @@
 import torch, torch.nn as nn
 
+#===============================================================================
+
+class BCELoss(nn.Module):
+    def __init__(self, pos = 1):        
+        """
+        pos - weight of positive class
+        """
+        super().__init__()            
+        assert pos > 0, f"weight of positive class should be positive, but got {pos}"
+        self.pos = pos
+
+    def forward(self, pred, true, eps=1e-6):
+        """ loss-function eps <= 1e-7 !!! """
+        pred = torch.clamp(pred, min=eps, max=1-eps) 
+        pred = pred.flatten()                          # for segmentation
+        true = true.flatten() 
+        loss = -( self.pos * true * torch.log(pred) + (1-true) * torch.log(1-pred) ).mean()
+        return loss / (1+self.pos)
+
+#===============================================================================
+
 class DiceLoss(nn.Module):
     def __init__(self, beta = 1.0):        
         super().__init__()    

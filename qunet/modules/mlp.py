@@ -101,7 +101,7 @@ class MLP(nn.Module):
             seq += [ nn.Linear(self.neurons[i-1],  self.neurons[i]) ]
             if i+1 < len(self.neurons):
                 seq += [get_activation(self.cfg.fun),
-                        nn.Dropout(self.cfg.drop)     ]                
+                        nn.Dropout(self.cfg.drop)     ]
         self.layers = nn.Sequential(*seq)
 
     #---------------------------------------------------------------------------

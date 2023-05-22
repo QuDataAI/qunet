@@ -164,7 +164,7 @@ def subplot_history(sub, val, trn, view, view_tot, c_unit, c_unit_power, unit, l
             ax2.minorticks_off() # for log scale         
 
 
-def plot_smooth_line(ax=None, x=[],y=[], color="black", label="", count=200, kern=50, stride=10, width=1.5, alpha=0.5):    
+def plot_smooth_line(ax=None, x=[],y=[], color="black", label="", count=200, kern=51, stride=1, width=1.5, alpha=0.5, num=10):    
     if len(x) != len(y):        
         print(f"Plot warning: {len(x)} != {len(y)}")
         x, y = x[:min(len(x),len(y))], y[:min(len(x),len(y))]
@@ -178,6 +178,16 @@ def plot_smooth_line(ax=None, x=[],y=[], color="black", label="", count=200, ker
         pool = nn.AvgPool1d(kern, stride=stride, padding=kern // 2, count_include_pad=False)
         avg_y = pool(torch.Tensor(y).view(1,-1)).flatten().numpy()
         avg_x = pool(torch.Tensor(x).view(1,-1)).flatten().numpy()
+        
+        sx, sxx = avg_x[-num:].sum(), (avg_x[-num:]*avg_x[-num:]).sum()
+        sy, sxy = avg_y[-num:].sum(), (avg_x[-num:]*avg_y[-num:]).sum()
+        d = num*sxx - sx*sx
+        if d > 0:
+            b = (num*sxy - sx*sy) / d                                 # экстраполируем вперёд
+            a = (sy - b*sx) / num                                     # даже при stride=1 график отстаёт                  
+            avg_x = np.append(avg_x, [ x[-1] ])                       # из-за усреднения x            
+            avg_y = np.append(avg_y, [a + b*x[-1]])
+                
         ax.plot(avg_x, avg_y, color, linewidth=width, label=label)    
         
 

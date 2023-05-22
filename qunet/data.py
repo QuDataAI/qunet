@@ -1,4 +1,5 @@
 ﻿import copy
+import numpy as np
 import torch
 
 class Data:
@@ -75,6 +76,9 @@ class Data:
             return True
 
         for i,d in enumerate(data): # check data
+            if type(d).__module__ == np.__name__:  # from numpy to torch
+                data[i] = d = torch.tensor(d)
+
             assert torch.is_tensor(d), "all data in dataset should be torch tensors"
             if i==0:
                 count_first = len(d)
