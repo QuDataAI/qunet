@@ -100,9 +100,9 @@ class Trainer:
                 ticks = None,          # how many labels on the y-axis
                 lr    = True,          # show learning rate
                 labels= True,          # show labels (training events)
-                trn_checks = False,     # show the achievement of the minimum training loss (dots)
+                trn_checks = False,    # show the achievement of the minimum training loss (dots)
                 val_checks = True,     # show the achievement of the minimum validation loss (dots)
-                last_checks = 100,          # how many last best points to display (if -1 then all)
+                last_checks = 100,     # how many last best points to display (if -1 then all)
                 cfg   =  Config(),
                 exclude = [],
                 fontsize = 8,
@@ -116,7 +116,7 @@ class Trainer:
                 labels = True,         # show labels (training events)
                 trn_checks = False,    # show the achievement of the optimum training score (dots)
                 val_checks = True,     # show the achievement of the optimum validation score (dots)
-                last_checks = 100,      # how many last best points to display (if -1 then all)
+                last_checks = 100,     # how many last best points to display (if -1 then all)
                 cfg =  Config(),
                 exclude = [],
                 fontsize = 8,
@@ -610,7 +610,8 @@ class Trainer:
             print()
 
         epochs = epochs or 1_000_000_000
-        last_best, loss_val = 0, 0
+        last_best = max(self.hist.val.best.score_epochs, self.hist.val.best.loss_epochs)
+        loss_val  = 0
         #for epoch in tqdm(range(1, epochs+1)):
         for epoch in range(1, epochs+1):
             self.fit_epoch = epoch               # epoch from start fit function
@@ -633,7 +634,6 @@ class Trainer:
                 self.hist.trn.best.losses.append( (loss_trn, self.hist.epochs, self.hist.samples, self.hist.steps) )
                 for callback in self.callbacks:
                     callback.on_best_loss(self, self.model)
-
 
             if self.best_score(self.hist.trn.best.score, score_trn):
                 last_best = self.epoch
@@ -869,18 +869,28 @@ class Trainer:
             trainer.model = ClassModel(state['config'])
 
         if trainer.model is not None:
-            trainer.model.load_state_dict(state['model'])
+            try:
+                trainer.model.load_state_dict(state['model'])
+            except:
+                print("!!!! Trainer.load> can't trainer.model.load_state_dict")
 
-        if 'optim_state' in state and 'optim' in state:
-            if state['optim'] == torch.optim.SGD:
-                trainer.optim  = torch.optim.SGD(trainer.model.parameters(), lr=1e-5)
-            elif state['optim'] == torch.optim.Adam:
-                trainer.optim  = torch.optim.Adam(trainer.model.parameters(), lr=1e-5)
-            elif state['optim'] == torch.optim.AdamW:
-                trainer.optim  = torch.optim.AdamW(trainer.model.parameters(), lr=1e-5)
+        if trainer.model is not None:
+            if 'optim_state' in state and 'optim' in state:
+                if state['optim'] == torch.optim.SGD:
+                    trainer.optim  = torch.optim.SGD(trainer.model.parameters(), lr=1e-5)
+                elif state['optim'] == torch.optim.Adam:
+                    trainer.optim  = torch.optim.Adam(trainer.model.parameters(), lr=1e-5)
+                elif state['optim'] == torch.optim.AdamW:
+                    trainer.optim  = torch.optim.AdamW(trainer.model.parameters(), lr=1e-5)
 
-            if trainer.optim is not None and 'optim_state' in state and state['optim_state'] is not None:
-                trainer.optim.load_state_dict(state['optim_state'])
+            if trainer.optim is not None:
+                try:
+                    if 'optim_state' in state and state['optim_state'] is not None:
+                        trainer.optim.load_state_dict(state['optim_state'])
+                    elif 'state_dict' in state and state['state_dict'] is not None:  # old version  
+                        trainer.optim.load_state_dict(state['state_dict'])
+                except:
+                    print("!!!! Trainer.load> can't trainer.optim.load_state_dict")
 
         trainer.hist(state['hist'])
         trainer.view(state['view'])
