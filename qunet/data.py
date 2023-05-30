@@ -205,7 +205,7 @@ class Data:
     #---------------------------------------------------------------------------
 
     def __len__(self):
-        nb = self.count()  // self.batch_size
+        nb = (self.count() // self.n_packs) // self.batch_size
         if not self.whole_batch and self.count()  % self.batch_size:
             nb += 1
         return nb
@@ -227,9 +227,7 @@ class Data:
 #===============================================================================
 if __name__ == '__main__':
     X = torch.rand((100,))
-    data1 = Data(X, batch_size=50)
-    data2 = Data()
-    print(data2.count())
-    data2.add(data1)
-    print(data2.count())
+    data = Data(X, batch_size=7, n_packs=10)    
+    print(data.count(), len(data))
+    
 

@@ -318,7 +318,8 @@ class Trainer:
 
         samples, steps, beg, lst = 0, 0, time.time(), time.time()
         counts_all, losses_all,  scores_all = torch.empty(0,1), None,  None
-        for batch_id, batch in enumerate(data):
+        batch_id = 0  # может и раньше итератор прерваться (enumerate - плохо)
+        for batch in data:
             num   = self.samples_in_batch(batch)
 
             if train:
@@ -373,6 +374,8 @@ class Trainer:
                 lst = time.time()
                 self.fit_progress(train, batch_id+1, len(data),
                                   losses_all, scores_all, counts_all, samples, steps, time.time()-beg)
+            
+            batch_id += 1  
 
         if train: self.hist.time.trn += (time.time()-beg)
         else:     self.hist.time.val += (time.time()-beg)
@@ -606,7 +609,6 @@ class Trainer:
             losses, scores, counts, (samples_val, steps_val, tm_val) = self.fit_one_epoch(self.model, self.data.val, train=False)
             loss_val, score_val = self.mean(losses, scores, counts)
             self.add_hist(self.hist.val, self.data.val.batch_size, samples_val, steps_val, tm_val, loss_val, score_val, self.scheduler.get_lr())
-            self.ext_hist(False, loss_val, score_val, self.scheduler.get_lr())
             print()
 
         epochs = epochs or 1_000_000_000
@@ -624,7 +626,6 @@ class Trainer:
             loss_trn, score_trn = self.mean(losses, scores, counts)
             lr = self.scheduler.get_lr()
             self.add_hist(self.hist.trn, self.data.trn.batch_size, samples_trn, steps_trn, tm_trn, loss_trn, score_trn, lr)
-            self.ext_hist(True, loss_trn, score_trn, lr)
 
             if self.hist.trn.best.loss is None or self.hist.trn.best.loss > loss_trn:
                 last_best = self.epoch
@@ -655,7 +656,7 @@ class Trainer:
                 losses, scores, counts, (samples_val,steps_val,tm_val) = self.fit_one_epoch(self.model, self.data.val, train=False)
                 loss_val, score_val = self.mean(losses, scores, counts)
                 self.add_hist(self.hist.val, self.data.val.batch_size, samples_val, steps_val, tm_val, loss_val, score_val, lr)
-                self.ext_hist(False, loss_val, score_val, lr)
+                self.ext_hist(loss_trn, score_trn, loss_val, score_val, lr)
 
                 # save best validation loss:
                 if self.hist.val.best.loss is None or self.hist.val.best.loss > loss_val:
@@ -692,8 +693,8 @@ class Trainer:
             if self.folders.point and 'point' in monitor and (period_point > 0 and point_start < self.epoch and self.epoch % period_point == 0 or epoch == epochs):
                 for callback in self.callbacks:
                     callback.on_save_checkpoint(self, self.model, {})
-                score_val = score_val or [0]
-                score_trn = score_trn or [0]
+                score_val = score_val if score_val is not None else [0]
+                score_trn = score_trn if score_trn is not None else [0]
                 fname = f"epoch_{self.epoch:04d}({self.now()})_score(val_{score_val[0]:.4f}_trn_{score_trn[0]:.4f})_loss(val_{loss_val:.4f}_trn_{loss_trn:.4f}).pt"
                 self.save(Path(self.folders.point) / Path(self.folders.prefix + fname), model=self.model, optim=self.optim)
 
@@ -780,9 +781,8 @@ class Trainer:
 
     #---------------------------------------------------------------------------
 
-    def ext_hist(self, train, loss, score, lr):
-        pref = 'trn' if train else 'val'
-        self.wandb and self.wandb.log({f'{pref}_score': score, f'{pref}_loss': loss, f'{pref}_lr': lr})
+    def ext_hist(self, loss_trn, score_trn, loss_val, score_val, lr):
+        self.wandb and self.wandb.log({'loss_trn': loss_trn, 'score_trn': score_trn, 'loss_val': loss_val, 'score_val': score_val, 'lr': lr})
 
     #---------------------------------------------------------------------------
 
@@ -826,7 +826,7 @@ class Trainer:
 
     #---------------------------------------------------------------------------
 
-    def load(fname, ClassModel, trainer=None):
+    def load(fname, ClassModel=None, trainer=None):
         """
         Static method of created trainer with loaded model.
 
@@ -865,8 +865,13 @@ class Trainer:
 
         trainer = trainer or Trainer(None, None)
 
-        if ClassModel is not None:
+        try:
+            if ClassModel is None:
+                ClassModel = globals()[state.get('class').__name__]
             trainer.model = ClassModel(state['config'])
+        except:
+            print(f"Can not create model class: {state.get('class').__name__}")
+            
 
         if trainer.model is not None:
             try:
@@ -898,6 +903,38 @@ class Trainer:
         print(f"epoch: {trainer.epoch}")        
         return trainer
 
+    #---------------------------------------------------------------------------
+
+    def load_history(fname, verbose=0):
+        """
+        Load training history from file fname
+
+        Args
+        ------------
+        fname (str):
+            file name with model parameters
+
+        Example
+        ------------
+        class Model(nn.Module):
+            ...
+
+        hist = trainer.load_history("cur_model.pt")
+        trainer.plot(hist)
+        """
+        try:
+            state = torch.load(fname, map_location='cpu')
+            if verbose:
+                print(f"info:  {state.get('info', '???')}")
+                print(f"date:  {state.get('date', '???')}")
+                print(f"model: {state.get('class','???')}")
+                print(f"optim: {state.get('optim','???')}")
+                #print(f"       {state.get('optim_cfg','???')}")
+        except:
+            print(f"Cannot open file: '{fname}'")
+            return None
+
+        return state.get('view')
     #---------------------------------------------------------------------------
 
     def wandb_init(self):

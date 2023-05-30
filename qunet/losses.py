@@ -26,7 +26,7 @@ class DiceLoss(nn.Module):
         super().__init__()    
         self.beta = beta
 
-    def forward(self, pred, true, eps=1e-8):
+    def forward(self, pred, true, eps=1e-6):
         """ loss-function """
         return 1 - self.score(pred, true)
 

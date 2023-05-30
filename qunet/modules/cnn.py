@@ -414,6 +414,7 @@ class ResCNN(nn.Module):
         if type(cfg.stride)  == int:     cfg.stride  = [cfg.stride]  * len(cfg.channel)
         if type(cfg.kernel)  == int:     cfg.kernel  = [cfg.kernel]  * len(cfg.channel)
         if type(cfg.pool_ker)== int:     cfg.pool_ker= [cfg.pool_ker]* len(cfg.channel)
+        if type(cfg.pool_str)== int:     cfg.pool_str= [cfg.pool_str]* len(cfg.channel)
         if type(cfg.skip)    == int:     cfg.skip    = [cfg.skip]    * len(cfg.channel)
         if type(cfg.drop) in (float,int):cfg.drop    = [cfg.drop]    * len(cfg.channel)
         if type(cfg.drop_d)  == int:     cfg.drop_d  = [cfg.drop_d]  * len(cfg.channel)
@@ -442,8 +443,9 @@ class ResCNN(nn.Module):
                                         )
                             ]
             if cfg.pool_ker[i] > 1:
+                pool_str = cfg.pool_str[i] if pool_str[i] > 0 else cfg.pool_ker[i]
                 self.layers += [ nn.MaxPool2d(kernel_size = cfg.pool_ker[i],
-                                              stride      = cfg.pool_str[i]) ]
+                                              stride      = pool_str) ]
 
         if cfg.averpool:
             self.layers += [ nn.AdaptiveAvgPool2d((1, 1)) ]
