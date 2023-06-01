@@ -935,6 +935,14 @@ class Trainer:
             return None
 
         return state.get('view')
+    
+    #---------------------------------------------------------------------------
+
+    def transfer(self, fname):
+        """ Load to currnet model parameters from file fname with another model """                
+        state = torch.load(fname)
+        self.model.load_state_dict(state['model'])        
+
     #---------------------------------------------------------------------------
 
     def wandb_init(self):
