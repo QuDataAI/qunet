@@ -5,9 +5,10 @@ import numpy as np, matplotlib.pyplot as plt
 import torch, torch.nn as nn
 
 from .utils    import Config
+from .utils    import ModelEma
 from .callback import Callback
 from .batch    import Batch
-from .optim    import Scheduler
+from .optim.scheduler    import Scheduler
 from .plots    import plot_history
 
 class Trainer:
@@ -15,7 +16,7 @@ class Trainer:
     Generic model training class.
     Any method can, of course, be overridden by inheritance or by an instance.
     """
-    def __init__(self, model=None, data_trn=None, data_val=None, callbacks=[], score_max=True, wandb_cfg=None) -> None:
+    def __init__(self, model=None, data_trn=None, data_val=None, callbacks=[], score_max=True, wandb_cfg=None, ema=False, ema_decay=0.9999, ema_start_epoch=1) -> None:
         """
         Trainer
 
@@ -39,6 +40,12 @@ class Trainer:
                         WANDB project name
                     run_name(str, optional)
                         WANDB run name
+            ema (bool)
+                enable EMA (Exponential Moving Average) support
+            ema_decay (float)
+                average decay for EMA
+            ema_start_epoch (int)
+                first epoch to average weights (avoid first random values impact)
         """
         self.model     = model
         self.score_max = score_max       # метрика должна быть максимальной (например accuracy)
@@ -58,17 +65,26 @@ class Trainer:
 
         self.data = Config(trn = data_trn,  val = data_val)
 
+        self.ema = ema                              # enable EMA (Exponential Moving Average) support
+        self.ema_decay = ema_decay                  # average decay for EMA
+        self.ema_start_epoch = ema_start_epoch      # first epoch to average weights (avoid first random values impact)
+        self.model_ema = None                       # reference to ema model
+
         self.best = Config(
             score = None,               # best val score
             loss = None,                # best val loss
             score_model = None,         # copy of the best model by val score
             loss_model  = None,         # copy of the best model by val loss
-            copy = False                 # should copy loss or score model if is in monitor
+            score_ema_model = None,     # copy of the best EMA model by val score
+            loss_ema_model  = None,     # copy of the best EMA model by val loss
+            copy = False                # should copy loss or score model if is in monitor
         )
 
         self.folders = Config(
             loss   = None,              # folder to save the best val loss models
             score  = None,              # folder to save the best val score models
+            loss_ema = None,            # folder to save the best val loss EMA models
+            score_ema = None,           # folder to save the best val score EMA models
             point  = None,              # folder to save checkpoints
             prefix = "",                # add prefix to file name
         )
@@ -153,6 +169,8 @@ class Trainer:
             val  = Config(
                         best = Config(  loss = None,       # лучшее значение валиадционная ошибки
                                         score = None,      # лучшее значение валиадционная метрики (первой)
+                                        loss_ema = None,   # лучшее значение валиадционная ошибки EMA модели
+                                        score_ema = None,  # лучшее значение валиадционная метрики (первой) EMA модели
                                         loss_samples  = 0, # когда была лучшая валиадционная ошибка
                                         loss_epochs   = 0, # когда была лучшая валиадционная ошибка
                                         score_samples = 0, # когда была лучшая валиадционная метрика
@@ -292,15 +310,18 @@ class Trainer:
 
     #---------------------------------------------------------------------------
 
-    def fit_one_epoch(self, model, data,  train=True, accumulate=1, verbose=1):
+    def fit_one_epoch(self, model, data,  train=True, accumulate=1, state=None, verbose=1):
         """
         Args
         ------------
         train (bool=True):
             режим тренировки, иначе валидации
         accumulate:
-            аккумулировать градиент для стольки батчей перед сдвигом оптимизатора; используем, когда большой батч или граф не помещаются в GPU
-            https://pytorch.org/blog/what-every-user-should-know-about-mixed-precision-training-in-pytorch/
+            аккумулировать градиент для accumulate батчей перед сдвигом оптимизатора; используем, когда большой батч или граф не помещаются в GPU
+            https://kozodoi.me/blog/20210219/gradient-accumulation
+        
+        float16:
+        https://pytorch.org/blog/what-every-user-should-know-about-mixed-precision-training-in-pytorch/
         """
         self.model.train(train)                     # режим обучение или тестирование
         torch.set_grad_enabled(train)               # строить или нет вычислительный граф
@@ -347,17 +368,26 @@ class Trainer:
             loss, scores = self.get_metrics(step)
 
             if train:
+                if accumulate > 1:                  # normalize loss to account for batch accumulation (!)
+                    loss = loss / accumulate
+
                 if scaler is None:
-                    loss.backward()   # вычисляем градиенты
+                    loss.backward()                 # вычисляем градиенты
                 else:
                     scaler.scale(loss).backward()   # вычисляем градиенты
-                if (batch_id+1) % accumulate == 0:
+
+                if (batch_id+1) % accumulate == 0 or (batch_id + 1 == len(data)):
                     if scaler is None:
                         self.optim.step()
                     else:
                         scaler.step(self.optim)     # подправляем параметры
                         scaler.update()             # Updates the scale for next iteration
+
+                    if state is not None:
+                        state.update()
+
                     self.optim.zero_grad()          # обнуляем градиенты
+
                     steps      += 1                 # шагов за эпоху
                     self.hist.steps += 1            # шагов за всё время
                 self.hist.samples += num            # примеров за всё время
@@ -415,8 +445,15 @@ class Trainer:
             for i in range(1, len(score)):
                 st += f"{score[i]:.4f}" + (", " if i+1 < len(score) else ") ")
         st += f"loss={loss:.4f};"
-        st += f" best score=(val:{(self.hist.val.best.score or 0.0):.3f}[{self.hist.val.best.score_epochs or ' '}] trn:{(self.hist.trn.best.score or 0.0):.3f}[{self.hist.trn.best.score_epochs or ' '}]),"
-        st += f" loss=(val:{(self.hist.val.best.loss or 0.0):.3f}[{self.hist.val.best.loss_epochs or ' '}] trn:{(self.hist.trn.best.loss or 0.0):.3f}[{self.hist.trn.best.loss_epochs or ' '}])"
+
+        st += f" best score=(val:{(self.hist.val.best.score or 0.0):.3f}[{self.hist.val.best.score_epochs or ' '}]"
+        if self.hist.val.best.score_ema:
+            st += f" ema:{(self.hist.val.best.score_ema or 0.0):.3f}"
+        st += f" trn:{(self.hist.trn.best.score or 0.0):.3f}[{self.hist.trn.best.score_epochs or ' '}]),"
+        st += f" loss=(val:{(self.hist.val.best.loss or 0.0):.3f}[{self.hist.val.best.loss_epochs or ' '}]"
+        if self.hist.val.best.loss_ema:
+            st += f" ema:{(self.hist.val.best.loss_ema or 0.0):.3f}"
+        st += f" trn:{(self.hist.trn.best.loss or 0.0):.3f}[{self.hist.trn.best.loss_epochs or ' '}])"
 
         print(f"\r{self.epoch:3d}{'t' if train else 'v'}[{batch_id:4d}/{data_len:4d}] {st} {data_len*tm/max(batch_id,1):.0f}s", end="   ")
 
@@ -553,7 +590,9 @@ class Trainer:
             period_point: int=1,  point_start:int=1,
 
             monitor = [],
-            patience = None):
+            patience = None,
+            state = None,
+            period_state: int=0):
         """
         Args
         ------------
@@ -579,6 +618,10 @@ class Trainer:
                 what to save in folders: monitor=['loss'] or monitor=['loss', 'score', 'point']
             patience (int):
                 after how many epochs to stop if there was no better loss, but a better score during this time
+            state (ModelState=None)
+                an instance of the ModelState class that accumulates information about gradients on model parameters
+            period_state (int=0)
+                period after which the model state  plot is displayed (in epochs)
 
         Example
         ```
@@ -622,7 +665,7 @@ class Trainer:
             for callback in self.callbacks:
                 callback.on_train_epoch_start(self, self.model)
 
-            losses, scores, counts, (samples_trn,steps_trn,tm_trn) = self.fit_one_epoch(self.model, self.data.trn, train=True)            
+            losses, scores, counts, (samples_trn,steps_trn,tm_trn) = self.fit_one_epoch(self.model, self.data.trn, train=True, state=state)            
             loss_trn, score_trn = self.mean(losses, scores, counts)
             lr = self.scheduler.get_lr()
             self.add_hist(self.hist.trn, self.data.trn.batch_size, samples_trn, steps_trn, tm_trn, loss_trn, score_trn, lr)
@@ -645,18 +688,24 @@ class Trainer:
                 for callback in self.callbacks:
                     callback.on_best_score(self, self.model)
 
+            self.update_ema_model(monitor)
+
             for callback in self.callbacks:
                 callback.on_train_epoch_end(self, self.model)
 
             period = period_val_beg if val_beg and  self.epoch < val_beg  else period_val
-            if  self.data.val is not None  and ( (period and self.epoch % period == 0) or epoch == epochs ):
-                for callback in self.callbacks:
-                    callback.on_validation_epoch_start(self, self.model)
+            if  ( (period and self.epoch % period == 0) or epoch == epochs ):
+                if self.data.val is not None:
+                    for callback in self.callbacks:
+                        callback.on_validation_epoch_start(self, self.model)
 
-                losses, scores, counts, (samples_val,steps_val,tm_val) = self.fit_one_epoch(self.model, self.data.val, train=False)
-                loss_val, score_val = self.mean(losses, scores, counts)
-                self.add_hist(self.hist.val, self.data.val.batch_size, samples_val, steps_val, tm_val, loss_val, score_val, lr)
-                self.ext_hist(loss_trn, score_trn, loss_val, score_val, lr)
+                    losses, scores, counts, (samples_val,steps_val,tm_val) = self.fit_one_epoch(self.model, self.data.val, train=False)
+                    loss_val, score_val = self.mean(losses, scores, counts)
+                    self.add_hist(self.hist.val, self.data.val.batch_size, samples_val, steps_val, tm_val, loss_val, score_val, lr)
+                    self.ext_hist(loss_trn, score_trn, loss_val, score_val, lr)
+                else:
+                    loss_val  = loss_trn        # no validation data
+                    score_val = score_trn
 
                 # save best validation loss:
                 if self.hist.val.best.loss is None or self.hist.val.best.loss > loss_val:
@@ -689,6 +738,8 @@ class Trainer:
                     for callback in self.callbacks:
                         callback.on_after_plot(self, self.model)
                 self.stat()
+            if (state is not None) and period_state > 0 and  (self.epoch % period_state == 0 or epoch == epochs):
+                state.plot()            
 
             if self.folders.point and 'point' in monitor and (period_point > 0 and point_start < self.epoch and self.epoch % period_point == 0 or epoch == epochs):
                 for callback in self.callbacks:
@@ -717,6 +768,8 @@ class Trainer:
                     for callback in self.callbacks:
                         callback.on_after_plot(self, self.model)
                     self.stat()
+                if period_state > 0 and state is not None:
+                    state.plot()
                 break
 
         if period_plot <= 0:
@@ -743,6 +796,8 @@ class Trainer:
             print()
         if self.hist.val.best.score is not None:
             print(f"validation score={self.hist.val.best.score:.6f}, loss={self.hist.val.best.loss:.6f};  epochs={self.epoch}, samples={self.hist.samples}, steps={self.hist.steps}")
+            if self.hist.val.best.score_ema is not None:
+                print(f"ema score={self.hist.val.best.score_ema or 0.0:.6f}, loss={self.hist.val.best.loss_ema or 0.0:.6f}")
         elif self.hist.trn.best.score is not None:
             print(f"validation loss={self.hist.val.best.loss:.6f};  epochs={self.epoch}, samples={self.hist.samples}, steps={self.hist.steps}")
 
@@ -847,17 +902,18 @@ class Trainer:
 
         new_trainer = Trainer.load("cur_model.pt", Model)
         new_trainer.plot()
-        """
-        try:
-            state = torch.load(fname, map_location='cpu')
-            print(f"info:  {state.get('info', '???')}")
-            print(f"date:  {state.get('date', '???')}")
-            print(f"model: {state.get('class','???')}")
-            print(f"optim: {state.get('optim','???')}")
-            #print(f"       {state.get('optim_cfg','???')}")
-        except:
-            print(f"Cannot open file: '{fname}'")
-            return None
+        """ 
+
+        #try:
+        state = torch.load(fname, map_location='cpu')
+        print(f"info:  {state.get('info', '???')}")
+        print(f"date:  {state.get('date', '???')}")
+        print(f"model: {state.get('class','???')}")
+        print(f"optim: {state.get('optim','???')}")
+        #print(f"       {state.get('optim_cfg','???')}")
+        #except:
+        #    print(f"Cannot open file: '{fname}'")
+        #    return None
 
         assert type(state) == dict,  f"Apparently this model was not saved by the trainer: state:{type(state)}"
         assert 'model'  in state,    f"Apparently this model was not saved by the trainer: no 'model' in state: {list(state.keys())}"
@@ -867,10 +923,10 @@ class Trainer:
 
         try:
             if ClassModel is None:
-                ClassModel = globals()[state.get('class').__name__]
-            trainer.model = ClassModel(state['config'])
+                ClassModel = state.get('class')
+            trainer.model = ClassModel(state['config'])            
         except:
-            print(f"Can not create model class: {state.get('class').__name__}")
+            print(f"Can not create model class: {state.get('class')}")
             
 
         if trainer.model is not None:
@@ -968,3 +1024,42 @@ class Trainer:
             #resume="must"
         )
 
+    def update_ema_model(self, monitor):
+        """
+        Update weigths of EMA model with: decay * model + (1. - decay) * model_ema
+        """
+        if self.data.val is None:
+            return
+        
+        # create EMA model if not exists
+        if self.ema and (self.model_ema is None) and (self.ema_start_epoch < self.epoch):
+            self.model_ema = ModelEma(self.model, self.ema_decay, self.device)
+            return
+
+        if self.model_ema is None:
+            return
+
+        # update weights
+        self.model_ema.update(self.model)
+
+        # validate model
+        
+        losses, scores, counts, (samples_val, steps_val, tm_val) = self.fit_one_epoch(self.model_ema.module, self.data.val, train=False)
+        loss_val_ema, score_val_ema = self.mean(losses, scores, counts)
+
+        # save best EMA validation loss:
+        if self.hist.val.best.loss_ema is None or self.hist.val.best.loss_ema > loss_val_ema:
+            self.hist.val.best.loss_ema = loss_val_ema
+            if self.folders.loss_ema and 'loss_ema' in monitor:
+                self.save(Path(self.folders.loss_ema) / Path(
+                    self.folders.prefix + f"epoch_{self.epoch:04d}_loss_{loss_val_ema:.4f}_{self.now()}.pt"), model=self.model_ema.module)
+            if self.best.copy and 'loss_ema' in monitor:
+                self.best.loss_ema_model = copy.deepcopy(self.model_ema.module)
+
+        # save best EMA validation score:
+        if self.best_score(self.hist.val.best.score_ema, score_val_ema):
+            self.hist.val.best.score_ema = score_val_ema[0]
+            if self.folders.score_ema and 'score_ema' in monitor:
+                self.save(Path(self.folders.score_ema) / Path(self.folders.prefix + f"epoch_{self.epoch:04d}_score_{score_val_ema[0]:.4f}_{self.now()}.pt"), model=self.model_ema.module)
+            if self.best.copy and 'score_ema' in monitor:
+                self.best.score_ema_model = copy.deepcopy(self.model_ema.module)

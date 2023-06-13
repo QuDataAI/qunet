@@ -443,7 +443,7 @@ class ResCNN(nn.Module):
                                         )
                             ]
             if cfg.pool_ker[i] > 1:
-                pool_str = cfg.pool_str[i] if pool_str[i] > 0 else cfg.pool_ker[i]
+                pool_str = cfg.pool_str[i] if cfg.pool_str[i] > 0 else cfg.pool_ker[i]
                 self.layers += [ nn.MaxPool2d(kernel_size = cfg.pool_ker[i],
                                               stride      = pool_str) ]
 

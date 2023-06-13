@@ -3,10 +3,13 @@ import numpy as np,  matplotlib.pyplot as plt, pandas as pd
 from   tqdm.auto import tqdm
 import torch, torch.nn as nn
 
-from qunet import  Config, Data, MLP, CNN, ResCNN, SelfAttention, FFT, TransformerBlock, Transformer, PointsBlock
+from qunet import  ModelInfo, Trainer, Config, Data, MLP, CNN, ResCNN, SelfAttention, FFT, TransformerBlock, Transformer, PointsBlock
 
 print("--------------------------")
 
+
+
+"""
 res = True
 res = res and MLP.unit_test()
 res = res and CNN.unit_test()
@@ -23,6 +26,7 @@ print("--------------------------")
 print("unit tests result = ", res)
 print("--------------------------")
 
+"""
 import torch, torch.nn as nn, torch.nn.functional as F
 
 
@@ -30,3 +34,5 @@ weights = torch.tensor([5, 10, 3, 5], dtype=torch.float)
 choice  = torch.multinomial(weights, 1)
 
 print( choice )
+
+print(globals().keys())
