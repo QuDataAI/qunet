@@ -22,9 +22,9 @@ def get_activation(activation, inplace=True):
         return activation()
     elif isinstance(activation, str):
         if activation     == "sigmoid":
-            return  nn.Sigmoid(inplace=inplace)
+            return  nn.Sigmoid()
         elif activation   == "tanh":
-            return nn.Tanh(inplace=inplace)
+            return nn.Tanh()
         elif activation   == "gelu":
             return  nn.GELU()    
         elif activation   == "relu":

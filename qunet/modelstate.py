@@ -4,7 +4,7 @@ import torch, torch.nn as nn
 class ModelState:
     def __init__(self, model, beta=0.8):
         self.model = model
-        self.beta  = min(0.999, max(0.001, beta)) 
+        self.beta  = min(0.999, max(0.001, beta))
         self.__params   = {}
         self.__layers   = []
         self.__layersID = {}
@@ -42,17 +42,18 @@ class ModelState:
         """
         Set initial statistics values for each model parameter
         """
-        self.__params = dict()        
-        for n, p in self.model.named_parameters():                        
+        self.__params = dict()
+        for n, p in self.model.named_parameters():
             self.__params[n] = {
                 'numel': p.numel(),
+                'is_grad': p.requires_grad,
                 'shape': tuple(p.shape),
                 'data' : torch.square(p.data).sum().cpu(),
                 'min'  : p.data.abs().min().cpu(),
-                'max'  : p.data.abs().max().cpu(),                              
+                'max'  : p.data.abs().max().cpu(),
                 'grad' : 0,
             }
-            if p.grad is not None:                    
+            if p.grad is not None:
                 self.__params[n]['grad'] = torch.square(p.grad).sum().cpu()
 
     #---------------------------------------------------------------------------
@@ -65,14 +66,14 @@ class ModelState:
         if len(self.__params) == 0:
             self.reset()
             return
-        
+
         w1, w2 = 1-self.beta, self.beta
         for n, p in model.named_parameters():
             param = self.__params[n]
             param['data'] = w1 * param['data'] + w2 * torch.square(p.data).sum().cpu()
             param['min']  = w1 * param['min']  + w2 * p.data.abs().min().cpu()
             param['max']  = w1 * param['max']  + w2 * p.data.abs().max().cpu()
-            if p.grad is not None:                    
+            if p.grad is not None:
                 if 'grad' not in param:
                     param['grad'] = torch.square(p.grad).sum().cpu()
                 else:
@@ -82,10 +83,10 @@ class ModelState:
 
     def sum_values(self, params, kind='numel'):
         tot = 0
-        for n in params:            
+        for n in params:
             tot += self.__params[n][kind]
         return tot
-    
+
     #---------------------------------------------------------------------------
 
     def get_groups(self, agg=0):
@@ -96,7 +97,7 @@ class ModelState:
         ------------
             agg (int=None):
                 cut off the agg of the last levels of the parameter name to aggregate them (level0.weight -> level0)
-        """        
+        """
         if agg is None:
             agg = self.agg
         else:
@@ -106,11 +107,11 @@ class ModelState:
         for n, _ in self.model.named_parameters():
             parts = n.split(".")
             parts = parts if agg==0 else parts[:- min(len(parts)-1, agg)]
-            base  = ".".join(parts)                            
+            base  = ".".join(parts)
             if base in groups:
                 groups[base]['names'].append(n)
             else:
-                groups[base] = { 'names': [n], 'numel':[], 'data':[], 'min':[], 'max':[], 'shape':[], 'grad': [] }
+                groups[base] = { 'names': [n], 'numel':[], 'data':[], 'min':[], 'max':[], 'shape':[], 'grad': [], 'is_grad': [] }
             names[n] = base
         return groups, names
 
@@ -118,28 +119,30 @@ class ModelState:
 
     def groups_init(self, groups):
         for group in groups.values():
-            group['numel'] = []; group['shape']  = []; group['data']=[]; 
-            group['min']   = []; group['max']  = []; 
-            group['grad']  = []            
+            group['numel'] = []; group['shape']  = []; group['data']=[];
+            group['min']   = []; group['max']  = [];
+            group['grad']  = []
+            group['is_grad'] = []
 
     #---------------------------------------------------------------------------
 
     def aggregate(self, agg=None):
         """
-        """            
+        """
         groups, names = self.get_groups(agg=agg)
         self.groups_init(groups)
         if len(self.__params) == 0:
             self.reset()
-        
-        for name, param in self.__params.items():            
+
+        for name, param in self.__params.items():
             group = names[name]
-            groups[group]['numel'].append(param['numel']) 
-            groups[group]['data'] .append( param['data'] )    
-            groups[group]['grad'] .append( param['grad'] )                       
-            groups[group]['min']  .append( param['min'])  
-            groups[group]['max']  .append( param['max'])  
-            groups[group]['shape'].append( param['shape'])    
+            groups[group]['numel'].append(param['numel'])
+            groups[group]['data'] .append( param['data'] )
+            groups[group]['grad'] .append( param['grad'] )
+            groups[group]['min']  .append( param['min'])
+            groups[group]['max']  .append( param['max'])
+            groups[group]['shape'].append( param['shape'])
+            groups[group]['is_grad'].append( param['is_grad'])
 
         for group in groups.values():
             numel = group['numel'] = sum(group['numel'])
@@ -147,23 +150,24 @@ class ModelState:
             group['min'] = min(group['min'])
             group['max'] = min(group['max'])
             group['shape'] = group['shape'][-1]         # ?
+            group['is_grad'] = sum(group['is_grad']) / len(group['is_grad'])
             if len(group['grad']):
                 group['grad'] = (sum(group['grad']) / numel)**0.5  if numel > 0 else 0
             else:
                 group['grad'] = 0
 
-        return groups            
+        return groups
 
     #---------------------------------------------------------------------------
 
     def get_layers(self, model, depth=0, name="",  layers=[]):
-        for i, (nm,mo) in enumerate(model.named_children()):        
+        for i, (nm,mo) in enumerate(model.named_children()):
             n_kids = len(list(mo.children()))
             if n_kids > 0:
                 self.__layersID[id(mo)] = len(layers)
-                layers.append({'name': name+"."+nm, 
-                              'params':[], 'depth': depth, 'i':i, 'n_kids': n_kids, 'module': mo, 
-                              'input':'', 'output':''})                
+                layers.append({'name': name+"."+nm,
+                              'params':[], 'depth': depth, 'i':i, 'n_kids': n_kids, 'module': mo,
+                              'input':'', 'output':''})
                 self.get_layers(mo, depth=depth+1, name=name+"."+nm if len(name) else nm, layers=layers)
             else:
                 self.__layersID[id(mo)] = len(layers)
@@ -171,7 +175,7 @@ class ModelState:
                               'params':[name +"." + nm + "."+ n if len(name) else nm+"."+n for n,_ in mo.named_parameters()],
                               'depth': depth, 'i':i, 'n_kids': 0, 'module': mo,
                               'input':'', 'output':'' })
-    
+
     #---------------------------------------------------------------------------
 
     def get_layers_descr(self, info = 0):
@@ -186,36 +190,36 @@ class ModelState:
                 if info == 1:
                     if   layer == "Linear":   descr += f"({mo.in_features}->{mo.out_features})"
                     elif layer == "Bilinear": descr += f"({mo.in1_features},{mo.in2_features}->{mo.out_features})"
-                    elif layer in ["Dropout", "Dropout2d", "Dropout3d"]:   descr += f"({mo.p})"                    
-                    elif layer in ["Conv1d","Conv2d","Conv3d"]: descr += f"({mo.in_channels}->{mo.out_channels})"            
-                    elif layer in ["MaxPool1d", "MaxPool2d", "MaxPool3d"]: descr += f"({mo.kernel_size})"         
+                    elif layer in ["Dropout", "Dropout2d", "Dropout3d"]:   descr += f"({mo.p})"
+                    elif layer in ["Conv1d","Conv2d","Conv3d"]: descr += f"({mo.in_channels}->{mo.out_channels})"
+                    elif layer in ["MaxPool1d", "MaxPool2d", "MaxPool3d"]: descr += f"({mo.kernel_size})"
                     elif layer == 'Embedding': descr += f"({mo.num_embeddings},{mo.embedding_dim})"
                     elif layer in ['RNN','GRU','LSTM']: descr += f"({mo.input_size},{mo.hidden_size})"
-                elif info > 1:                
+                elif info > 1:
                     if   layer == "Linear": descr += f"({mo.in_features}->{mo.out_features}, {'T' if mo.bias is not None else 'F'})"
-                    elif layer in ["Dropout", "Dropout2d", "Dropout3d"]:   descr += f"({mo.p})"                    
-                    elif layer in ["Conv1d","Conv2d","Conv3d"]: descr += f"({mo.in_channels}->{mo.out_channels}, k:{mo.kernel_size}, s:{mo.stride}, p:{mo.padding}, {'T' if mo.bias is not None else 'F'})"            
-                    elif layer in ["MaxPool1d", "MaxPool2d", "MaxPool3d"]: descr += f"(k:{mo.kernel_size}, s:{mo.stride}, p:{mo.padding})"            
-                    elif layer in ["BatchNorm1d","BatchNorm2d","BatchNorm3d"]: descr += f"({mo.num_features})"      
-                    elif layer == "LayerNorm": descr += f"({mo.normalized_shape})"      
+                    elif layer in ["Dropout", "Dropout2d", "Dropout3d"]:   descr += f"({mo.p})"
+                    elif layer in ["Conv1d","Conv2d","Conv3d"]: descr += f"({mo.in_channels}->{mo.out_channels}, k:{mo.kernel_size}, s:{mo.stride}, p:{mo.padding}, {'T' if mo.bias is not None else 'F'})"
+                    elif layer in ["MaxPool1d", "MaxPool2d", "MaxPool3d"]: descr += f"(k:{mo.kernel_size}, s:{mo.stride}, p:{mo.padding})"
+                    elif layer in ["BatchNorm1d","BatchNorm2d","BatchNorm3d"]: descr += f"({mo.num_features})"
+                    elif layer == "LayerNorm": descr += f"({mo.normalized_shape})"
                     elif layer == 'Embedding': descr += f"({mo.num_embeddings},{mo.embedding_dim})"
-                    elif layer in ['RNN','GRU','LSTM']: descr += f"({mo.input_size},{mo.hidden_size}, l:{mo.num_layers}, bi:{'T' if mo.bidirectional else 'F'})"                    
-            
+                    elif layer in ['RNN','GRU','LSTM']: descr += f"({mo.input_size},{mo.hidden_size}, l:{mo.num_layers}, bi:{'T' if mo.bidirectional else 'F'})"
+
                 skip = f"│{' '*max(0,3*depth-1)}{'├─ ' if i+1 < count else '└─ '}" if depth > 0 else "├─ "
                 lr['st'] = f"{skip}{descr}"
-    
+
     #---------------------------------------------------------------------------
-    #             
-    def layers(self, info=0, is_names=True, input_size=None, input_data=None):        
+    #
+    def layers(self, info=0, is_names=True, input_size=None, input_data=None):
         """
         Display information about model layers
 
         Args:
         ------------
             info (int=0):
-                (-1): name of layer; (0,1,2) - name of layer class with parameters of varying degrees of detail 
+                (-1): name of layer; (0,1,2) - name of layer class with parameters of varying degrees of detail
             is_name (bool=True):
-                show path to given layer (for -1,0,1)        
+                show path to given layer (for -1,0,1)
         """
         if len(self.__layers) == 0:
             self.get_layers(self.model, layers=self.__layers)
@@ -224,19 +228,19 @@ class ModelState:
         if len(self.__layers) == 0:
             print(self.model.__class__.__name__ + " model empty")
             return
-        
+
         if len(self.__params) == 0:
-            self.reset()              
+            self.reset()
 
         if input_size is not None or  input_data is not None:
             self.forward(input_size=input_size, input_data=input_data)
             inp_w = max( [len(ln['input'])  for ln in self.__layers ])
             out_w = max( [len(ln['output']) for ln in self.__layers ])
-        
+
         total_num = self.num_params(True)
         ma = max( [ len(ln['st']) for ln in self.__layers ] )
         print(self.model.__class__.__name__ + " "*(ma-len(self.model.__class__.__name__))+"      params           data")
-        for ln in self.__layers:            
+        for ln in self.__layers:
             shapes = ""
             if input_size is not None or  input_data is not None:
                 shapes  = ln['input']  +' '*(inp_w-len(ln['input'])) + ' -> '
@@ -248,24 +252,24 @@ class ModelState:
                 lst = ln['name'].split('.')
                 name = ".".join([ f"[{n}]" if n.isdigit() else n for n in lst])
                 name = name.replace(".[", "[" )
-                if name[0]==".": 
+                if name[0]==".":
                     name = name[1:]
                 name = ' <  ' + name
 
             if len(ln['params']) > 0:
-                num  = self.sum_values(ln['params'], kind='numel')                    
-                prs  = 100*num/total_num                          
+                num  = self.sum_values(ln['params'], kind='numel')
+                prs  = 100*num/total_num
                 data = f"{(self.sum_values(ln['params'], kind='data') / num)**0.5:5.3f}"
                 num_st  = ModelState.i2s(num)
-                prs_st  = f"~ {prs:3.0f}%" if prs > 0.5 else " "*6                    
-                
+                prs_st  = f"~ {prs:3.0f}%" if prs > 0.5 else " "*6
+
                 if input_size is not None or  input_data is not None:
                     data = ""
 
-                print(f"{ln['st']+' '*(ma-len(ln['st']))}  {num_st}  {prs_st} | {data} {shapes} {name}")  
+                print(f"{ln['st']+' '*(ma-len(ln['st']))}  {num_st}  {prs_st} | {data} {shapes} {name}")
             else:
                 w = 19 if  input_size is not None or  input_data is not None else 24
-                print(f"{ln['st']+' '*(ma-len(ln['st']))} {' '*w}    {shapes} {name}")  
+                print(f"{ln['st']+' '*(ma-len(ln['st']))} {' '*w}    {shapes} {name}")
 
         print("="*(ma+12))
         n1, n2, n3 = self.num_params(True),  self.num_params(False),  self.num_params(None)
@@ -302,7 +306,7 @@ class ModelState:
         after the forward pass. Note that inputs are always wrapped in a tuple while outputs are passed as-is.
         """
         assert id(m) in self.__layersID, f"module {id(m)} should be in __layersID"
-        idx = self.__layersID[id(m)]        
+        idx = self.__layersID[id(m)]
         if torch.is_tensor(output):
             self.__layers[idx]['output'] = f"{tuple(output.shape)}"
         elif type(output) in [list, tuple] and len(output) and torch.is_tensor(output[0]):
@@ -317,7 +321,7 @@ class ModelState:
     def forward(self, input_size=None, input_data=None):
         if len(self.__layers) == 0:
             self.get_layers(self.model, layers=self.__layers)
-        for lr in self.__layers:            
+        for lr in self.__layers:
             lr['forward_pre_hook_handle'] = lr['module'].register_forward_pre_hook(self.forward_pre_hook)
             lr['forward_hook_handle']     = lr['module'].register_forward_hook    (self.forward_hook)
 
@@ -340,7 +344,7 @@ class ModelState:
         if x is not None:
             self.model.to(device)
             with torch.no_grad():
-                if type(x) in [tuple, list]:                    
+                if type(x) in [tuple, list]:
                     y = self.model(*x)
                 else:
                     y = self.model(x)
@@ -352,7 +356,7 @@ class ModelState:
                 lr['forward_pre_hook_handle'].remove()
             if 'forward_hook_handle' in lr:
                 lr['forward_hook_handle'].remove()
-            
+
     #---------------------------------------------------------------------------
 
     def params(self, agg=None):
@@ -366,14 +370,15 @@ class ModelState:
         """
         groups = self.aggregate(agg=agg)
         num = self.num_params(True)
-        w = max([len(n) for n in groups.keys() ])        
+        w = max([len(n) for n in groups.keys() ])
         print(f"  # {' '*w}      params          |mean|  [     min,      max ]  |grad|   shape")
         print("-"*(w+50))
         for i, (name, group) in enumerate(groups.items()):
             nm = name + " "*(w-len(name))
             prc = 100*group['numel']/num
             prc = f"~{prc:3.0f}%" if prc > 0.5 else "     "
-            print(f"{i:3d}: {nm}  {ModelState.i2s(group['numel'],9)} {prc}  {group['data']:8.3f}  [{group['min']:8.3f}, {group['max']:8.3f}]  {group['grad']:8.1e}  {group['shape']}  ")
+            grad = f"{group['grad']:8.1e}" if group['is_grad'] > 0 else "-"*8
+            print(f"{i:3d}: {nm}  {ModelState.i2s(group['numel'],9)} {prc}  {group['data']:8.3f}  [{group['min']:8.3f}, {group['max']:8.3f}]  {grad}  {group['shape']}  ")
 
         print("="*(w+12+4))
         n1, n2, n3 = self.num_params(True),  self.num_params(False),  self.num_params(None)
@@ -422,30 +427,67 @@ class ModelState:
         n1, n2 = self.num_params(), self.num_params(True)
         plt.title(f"params: {ModelState.i2s(n2)} ({100*n2/n1:.2f}%)")
 
-        ax.set_yscale('log') 
-        ax.bar(x, numel, label="num", alpha=alpha, color='lightgray')                
+        ax.set_yscale('log')
+        ax.bar(x, numel, label="num", alpha=alpha, color='lightgray')
         ax.grid(ls=":")
 
         if data:
-            ax1 = ax.twinx()     
-            ax1.set_ylim(ymin=0)
+            ax1 = ax.twinx()            
             ax1.plot(x, data,   "-b.",  label="data")
+            ax1.set_ylim(bottom=0)   # after plot !!!
             #ax1.errorbar(x, data,   yerr=[mi, ma],  fmt='-b.', elinewidth=2, capsize=4, lw=1)
 
             ax1.spines["left"].set_position(("outward", 30))
             ax1.spines["left"].set_visible(True)
             ax1.yaxis.set_label_position('left')
-            ax1.yaxis.set_ticks_position('left')                
-            ax1.set_ylabel("data", color='b')    
+            ax1.yaxis.set_ticks_position('left')
+            ax1.set_ylabel("data", color='b')
             ax1.tick_params(axis='y', colors='b')
-        
+
         if grad:
-            ax2 = ax.twinx()    
-            ax2.set_ylim(ymin=0)    
-            ax2.plot(x, grad, "-r.", label="grad")                    
+            ax2 = ax.twinx()            
+            ax2.plot(x, grad, "-r.", label="grad")
+            ax2.set_ylim(bottom=0)   # after plot !!!
             ax2.set_ylabel("grad",  color='r')
             ax2.tick_params(axis='y', colors='r')
 
+        plt.show()
+
+    #---------------------------------------------------------------------------
+
+    @staticmethod
+    def plot_params(params, titles=None, sorted=1, grad=True, w=12, h=3):
+        if type(params) not in [list, tuple]:
+            params = [params]
+        fig, axs = plt.subplots(1,len(params), figsize=(w, h))
+        for i, p in enumerate(params):
+            ax = axs[i] if len(params) > 1 else axs
+            if p.dim()==1 or (p.dim()==2 and (p.shape[0]==1 or p.shape[-1]==1)):
+                if titles is not None and type(titles) in [list, tuple] and len(titles) > i:
+                    ax.set_title(titles[i])
+                ax.grid(ls=":")
+                ax.set_ylabel("data",  color='b')
+                ax.tick_params(axis='y', colors='b')
+                y = p.data.flatten().cpu().numpy()
+                if sorted < 2:                    
+                    ax.plot(y, "-b", lw=0.5 if len(y) > 1000 else 1)
+                if sorted >= 1:
+                    y = np.sort(y)
+                    ax.plot(y, "-g")
+
+                if grad and p.grad is not None:
+                    ax2 = ax.twinx()
+                    ax2.set_ylabel("grad",  color='r')
+                    g = p.grad.flatten().cpu().numpy()
+                    g = np.sort(g)
+                    ax2.plot(g, ":r")
+                    ax2.tick_params(axis='y', colors='r')
+
+            elif p.dim()==2:
+                y = p.data.cpu().numpy()
+                if sorted:
+                    y = np.sort(y)
+                ax.imshow(y)
         plt.show()
 
 
@@ -454,10 +496,10 @@ class ModelState:
 или named_parameters(), где последний включает имя каждого параметра.
 Вызовы parameters()и named_parameters()будут рекурсивно включать все дочерние параметры.
 
-Метод parameters() - это генератор только по обучаемым параметрам (его мы передаём оптимизатору). 
-Метод named_parameters() - аналогичный генератор, но дополнительно содержащий имена параметров. 
-Эти два метода позволяют, в т.ч., достучаться до градиентов параметров. 
-Кроме этого, есть словарь state_dict(), который обычно используется, 
-когда модель сохраняется в файле для последующей загрузки. 
-В нём присутствуют только данные и нет информации о градиентах, однако параметры есть все, включая не обучаемые. 
+Метод parameters() - это генератор только по обучаемым параметрам (его мы передаём оптимизатору).
+Метод named_parameters() - аналогичный генератор, но дополнительно содержащий имена параметров.
+Эти два метода позволяют, в т.ч., достучаться до градиентов параметров.
+Кроме этого, есть словарь state_dict(), который обычно используется,
+когда модель сохраняется в файле для последующей загрузки.
+В нём присутствуют только данные и нет информации о градиентах, однако параметры есть все, включая не обучаемые.
 """

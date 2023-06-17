@@ -1,4 +1,4 @@
-﻿import os, math, copy, time, datetime
+﻿import os, glob, math, copy, time, datetime
 from pathlib import Path
 from   tqdm.auto import tqdm
 import numpy as np, matplotlib.pyplot as plt
@@ -876,7 +876,15 @@ class Trainer:
 
     #---------------------------------------------------------------------------
 
-    def resume(self, fname):
+    def resume(self, fname=None):
+        if fname is None:
+            list_of_points = []
+            for folder in [self.folders.loss, self.folders.score, self.folders.point]:
+                list_of_points.extend(glob.glob(f'{folder}/*') if folder else [])
+            assert len(list_of_points) != 0, 'no saves for resume'
+            fname = max(list_of_points, key=os.path.getctime)
+        
+        print('resume from weights', fname)
         Trainer.load(fname, None, self)
 
     #---------------------------------------------------------------------------
@@ -905,7 +913,7 @@ class Trainer:
         """ 
 
         #try:
-        state = torch.load(fname, map_location='cpu')
+        state = torch.load(fname)  # , map_location='cpu'
         print(f"info:  {state.get('info', '???')}")
         print(f"date:  {state.get('date', '???')}")
         print(f"model: {state.get('class','???')}")
