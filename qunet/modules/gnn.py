@@ -1,4 +1,4 @@
-from ..utils   import Config
+from ..config   import Config
 from typing import Any, Callable, Optional, Sequence, Union
 from torch_geometric.nn import EdgeConv
 from torch_geometric.nn.pool import knn_graph
@@ -61,11 +61,11 @@ class GraphNet(nn.Module):
         super().__init__()  
         self.cfg = Config(
             name = 'GraphNet',
-            nb_inputs = 3, # число фич вершин исходного графа
-            layers = [     # уровни DynEdgeConv                       
-                       Config(mlp=[16,16],                  # слои MLP в DynEdgeConv
-                              features_subset=slice(0, 3),  # диапазон фич по которым считаютсЯ соседи
-                              nb_neighbors=4),              # число соседей длЯ каждой вершины графа
+            nb_inputs = 3, # пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
+            layers = [     # пїЅпїЅпїЅпїЅпїЅпїЅ DynEdgeConv                       
+                       Config(mlp=[16,16],                  # пїЅпїЅпїЅпїЅ MLP пїЅ DynEdgeConv
+                              features_subset=slice(0, 3),  # пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+                              nb_neighbors=4),              # пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
                        Config(mlp=[16,16], 
                               features_subset=slice(0, 3), 
                               nb_neighbors=4),

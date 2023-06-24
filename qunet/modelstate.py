@@ -3,6 +3,22 @@ import torch, torch.nn as nn
 
 class ModelState:
     def __init__(self, model, beta=0.8):
+        """
+        Example
+        ------------
+        ```
+            state = ModelState(model)
+
+            state.num_params() # number of model parameters
+            
+            state.layers()     # model layers
+            state.params()     # model parameters 
+            state.state()      # params and register_buffer
+
+            state.plot()       # draw params and grads
+            ModelState.hist_params([m.weight, m.bias], ["w","b"])
+        ```
+        """
         self.model = model
         self.beta  = min(0.999, max(0.001, beta))
         self.__params   = {}
@@ -210,13 +226,13 @@ class ModelState:
 
     #---------------------------------------------------------------------------
     #
-    def layers(self, info=0, is_names=True, input_size=None, input_data=None):
+    def layers(self, info=1, is_names=True, input_size=None, input_data=None):
         """
         Display information about model layers
 
         Args:
         ------------
-            info (int=0):
+            info (int=1):
                 (-1): name of layer; (0,1,2) - name of layer class with parameters of varying degrees of detail
             is_name (bool=True):
                 show path to given layer (for -1,0,1)
@@ -278,6 +294,18 @@ class ModelState:
             print(f"{'other:'+' '*(ma-11)}     {ModelState.i2s(n2,12)}")
             print(f"{'total:'+' '*(ma-11)}     {ModelState.i2s(n3,12)}")
 
+    #---------------------------------------------------------------------------
+
+    def state(self):
+        """
+        Display information about all parameters (including register buffers)
+        """
+        ma = max([len(k)  for k in self.model.state_dict().keys()])
+        descr = "param" + " "*(ma-5) + "   value            num  shape"
+        print(descr)
+        for k,v in self.model.state_dict().items():
+            val = v if v.numel() < 2 else torch.sqrt(torch.square(v).mean())
+            print(f"{k+' '*(ma-len(k))} {val.item():8.4f}  {ModelState.i2s(v.numel(),12)}  {tuple(v.shape)}")
 
     #---------------------------------------------------------------------------
 
@@ -457,8 +485,8 @@ class ModelState:
 
     @staticmethod
     def plot_params(params, titles=None, sorted=1, grad=True, w=12, h=3):
-        if type(params) not in [list, tuple]:
-            params = [params]
+        if type(params) not in [list, tuple]: params = [params]
+        if type(titles) is str:               titles = [titles]
         fig, axs = plt.subplots(1,len(params), figsize=(w, h))
         for i, p in enumerate(params):
             ax = axs[i] if len(params) > 1 else axs
@@ -489,6 +517,43 @@ class ModelState:
                     y = np.sort(y)
                 ax.imshow(y)
         plt.show()
+
+    #---------------------------------------------------------------------------
+
+    @staticmethod
+    def hist_params(params, titles=None, bins=50, w=12, h=3,  digits=2):        
+        if type(params) not in [list, tuple]: params = [params]
+        if type(titles) is str:               titles = [titles]
+
+        fig, axs = plt.subplots(1,len(params), figsize=(w, h))
+        for i, p in enumerate(params):
+            ax = axs[i] if len(params) > 1 else axs                   
+            values = p.data.flatten().cpu().numpy()
+            #values = p.data.abs().amax(dim=0).flatten().cpu().numpy()
+            #print(np.min(values), np.max(values))
+            title = titles[i] if titles is not None and type(titles) in [list, tuple] and len(titles) > i else ""
+
+            ModelState.hist_param(ax, values, title, bins=bins, digits=digits) 
+
+        plt.show()
+    
+    #---------------------------------------------------------------------------
+
+    @staticmethod
+    def hist_param(ax, v, title, bins=50, digits=2):
+        r = lambda x: '{x:.{digits}f}'.format(x=round(x,digits), digits=digits)                       
+
+        y, x = np.histogram(np.abs(v), bins=bins*10, density=True)
+        y = np.array([y[i]*(x[i+1]-x[i]) for i in range(len(y))])
+        y = np.cumsum(y)
+        x = np.array([0.5*(x[i]+x[i+1]) for i in range(len(x)-1)])
+        ax.plot( x, y, "-g")
+        ax.grid(ls=":"); ax.set_ylabel("sum prob |p|", color='g'); ax.set_xlabel("|p|", color='g')
+        ax.set_title(f"{title} mean={r(v.mean())} ± {r(v.std())} [{r(v.min())}, {r(v.max())}]; cnt={len(v)}", fontsize=10)                
+            
+        ax2  = ax.twinx().twiny(); 
+        ax2.hist( v, bins=bins, color="lightblue", ec="black", alpha=0.5)
+        ax2.set_ylabel("N(p)", color="lightblue")
 
 
 """

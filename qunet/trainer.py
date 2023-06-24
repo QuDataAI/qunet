@@ -4,9 +4,8 @@ from   tqdm.auto import tqdm
 import numpy as np, matplotlib.pyplot as plt
 import torch, torch.nn as nn
 
-from .utils    import Config
-from .utils    import ModelEma
-from .callback import Callback
+from .config   import Config
+from .ema      import ModelEma
 from .batch    import Batch
 from .optim.scheduler    import Scheduler
 from .plots    import plot_history
@@ -445,11 +444,14 @@ class Trainer:
             for i in range(1, len(score)):
                 st += f"{score[i]:.4f}" + (", " if i+1 < len(score) else ") ")
         st += f"loss={loss:.4f};"
+        st += " best"
 
-        st += f" best score=(val:{(self.hist.val.best.score or 0.0):.3f}[{self.hist.val.best.score_epochs or ' '}]"
-        if self.hist.val.best.score_ema:
-            st += f" ema:{(self.hist.val.best.score_ema or 0.0):.3f}"
-        st += f" trn:{(self.hist.trn.best.score or 0.0):.3f}[{self.hist.trn.best.score_epochs or ' '}]),"
+        if score is not None and len(score):
+            st += f" score=(val:{(self.hist.val.best.score or 0.0):.3f}[{self.hist.val.best.score_epochs or ' '}]"
+            if self.hist.val.best.score_ema:
+                st += f" ema:{(self.hist.val.best.score_ema or 0.0):.3f}"                    
+            st += f" trn:{(self.hist.trn.best.score or 0.0):.3f}[{self.hist.trn.best.score_epochs or ' '}]),"
+
         st += f" loss=(val:{(self.hist.val.best.loss or 0.0):.3f}[{self.hist.val.best.loss_epochs or ' '}]"
         if self.hist.val.best.loss_ema:
             st += f" ema:{(self.hist.val.best.loss_ema or 0.0):.3f}"
@@ -794,16 +796,37 @@ class Trainer:
     def stat(self, newline=True):
         if newline:
             print()
-        if self.hist.val.best.score is not None:
-            print(f"validation score={self.hist.val.best.score:.6f}, loss={self.hist.val.best.loss:.6f};  epochs={self.epoch}, samples={self.hist.samples}, steps={self.hist.steps}")
-            if self.hist.val.best.score_ema is not None:
-                print(f"ema score={self.hist.val.best.score_ema or 0.0:.6f}, loss={self.hist.val.best.loss_ema or 0.0:.6f}")
-        elif self.hist.trn.best.score is not None:
-            print(f"validation loss={self.hist.val.best.loss:.6f};  epochs={self.epoch}, samples={self.hist.samples}, steps={self.hist.steps}")
 
+        trn_loss_avr,  trn_loss_std,  val_loss_avr,  val_loss_std  = 0, 0, 0, 0
+        trn_score_avr, trn_score_std, val_score_avr, val_score_std = 0, 0, 0, 0
+        n = 30
+        if len(self.hist.trn.losses) > 1:
+            trn_loss_avr = np.mean(self.hist.trn.losses[-n:]);  trn_loss_std = np.std(self.hist.trn.losses[-n:])
+        if len(self.hist.val.losses) > 1:
+            val_loss_avr = np.mean(self.hist.val.losses[-n:]);  val_loss_std = np.std(self.hist.val.losses[-n:])
+        if len(self.hist.trn.scores) > 1:
+            trn_score_avr = np.mean(self.hist.trn.scores[-n:]);  trn_score_std = np.std(self.hist.trn.scores[-n:])
+        if len(self.hist.val.scores) > 1:
+            val_score_avr = np.mean(self.hist.val.scores[-n:]);  trn_score_std = np.std(self.hist.val.scores[-n:])
+
+        if self.data.val is not None:                 # есть валидационные данные
+            if self.hist.val.best.score is not None:  # есть score
+                print(f"val_loss: bst = {self.hist.val.best.loss:.6f}[{self.hist.val.best.loss_epochs or ' '}], lst30 = {val_loss_avr:.4f} ± {val_loss_std:.4f};  val_score: bst = {self.hist.val.best.score:.6f}[{self.hist.val.best.score_epochs or ' '}],  lst30 = {val_score_avr:.4f} ± {val_score_std:.4f}")            
+            else:                                     # только loss
+                print(f"val_loss: bst = {self.hist.val.best.loss:.6f}[{self.hist.val.best.loss_epochs or ' '}], lst30 = {val_loss_avr:.4f} ± {val_loss_std:.4f}")
+
+            if self.hist.val.best.score_ema is not None:
+                print(f"ema: loss={self.hist.val.best.loss_ema or 0.0:.6f}, score={self.hist.val.best.score_ema or 0.0:.6f}")
+
+        if self.hist.trn.best.score is not None:     # есть score
+            print(f"trn_loss: bst = {self.hist.trn.best.loss:.6f}[{self.hist.trn.best.loss_epochs or ' '}], lst30 = {trn_loss_avr:.4f} ± {trn_loss_std:.4f};  trn_score: bst = {self.hist.trn.best.score:.6f}[{self.hist.trn.best.score_epochs or ' '}],  lst30 = {trn_score_avr:.4f} ± {trn_score_std:.4f}")            
+        else:                                        # только loss
+            print(f"trn_loss: bst = {self.hist.trn.best.loss:.6f}[{self.hist.trn.best.loss_epochs or ' '}], lst30 = {trn_loss_avr:.4f} ± {trn_loss_std:.4f}")            
+
+        print(f"epochs={self.epoch}, samples={self.hist.samples}, steps={self.hist.steps}")
         t_steps = f"{self.hist.time.trn*1_000/self.hist.steps:.2f}"   if self.hist.steps > 0 else "???"
         t_sampl = f"{self.hist.time.trn*1_000_000/self.hist.samples:.2f}" if self.hist.samples > 0 else "???"
-        t_epoch = f"{self.hist.time.trn/self.epoch:.2f}" if self.epoch > 0 else "???"
+        t_epoch = f"{self.hist.time.trn/self.epoch:.2f}" if self.epoch > 0 else "???"    
         print(f"times=(trn:{self.hist.time.trn/60:.2f}, val:{self.hist.time.val/60:.2f})m,  {t_epoch} s/epoch, {t_steps} s/10^3 steps,  {t_sampl} s/10^6 samples")
 
     #---------------------------------------------------------------------------

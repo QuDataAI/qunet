@@ -1,7 +1,7 @@
 ﻿import copy
 import torch, torch.nn as nn
 
-from ..utils   import Config
+from ..config   import Config
 from .mlp      import MLP
 #===============================================================================
 

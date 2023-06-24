@@ -1,7 +1,7 @@
 ﻿import copy
 import torch, torch.nn as nn
 
-from ..utils import Config
+from ..config import Config
 from .total  import get_activation
 #========================================================================================
 
@@ -60,6 +60,7 @@ class CNN(nn.Module):
 
     #---------------------------------------------------------------------------
 
+    @staticmethod
     def default():
         return copy.deepcopy(Config(
             input    = None,       # input tensor shape:  (channels, height, width)
@@ -147,7 +148,8 @@ class CNN(nn.Module):
         self.layers =  nn.Sequential(*layers)
 
     #---------------------------------------------------------------------------
-
+    
+    @staticmethod
     def unit_test():
         B,C,H,W = 1, 3, 64,32
         cnn = CNN(input=(C,H,W), channel=[5, 7])
@@ -238,6 +240,7 @@ class ResBlockCNN(nn.Module):
 
     #---------------------------------------------------------------------------
 
+    @staticmethod
     def default():
         return copy.deepcopy(Config(
             in_channels  = None,   # input tensor shape:: (channels, height, width)
@@ -380,6 +383,7 @@ class ResCNN(nn.Module):
 
     #---------------------------------------------------------------------------
 
+    @staticmethod
     def default():
         return copy.deepcopy(Config(
             input    = None,       # input tensor shape:  (channels, height, width)
@@ -488,6 +492,7 @@ class ResCNN(nn.Module):
 
     #---------------------------------------------------------------------------
 
+    @staticmethod
     def resnet18():
         cfg = ResCNN.default()
         cfg(
@@ -497,6 +502,7 @@ class ResCNN(nn.Module):
 
     #---------------------------------------------------------------------------
 
+    @staticmethod
     def unit_test():
         B,C,H,W = 1, 3, 64,32
         cnn = ResCNN(   input=(C,H,W),

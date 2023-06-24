@@ -56,11 +56,11 @@ def plot_history(hist, view, fname=""):
 
     if  not view.loss.show:
         subplot_history(111, val, trn, view=view.score, view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='score')
-    elif not view.score.show:
+    elif not view.score.show or (len(hist.trn.scores)==0 and len(hist.val.scores)==0):
         subplot_history(111, val, trn, view=view.loss,  view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='loss')
     else:
-        subplot_history(121, val, trn, view=view.score, view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='score')
-        subplot_history(122, val, trn, view=view.loss,  view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='loss')            
+        subplot_history(121, val, trn, view=view.loss,  view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='loss')            
+        subplot_history(122, val, trn, view=view.score, view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='score')        
     if fname:
         plt.savefig(fname, bbox_inches='tight')
     else:
@@ -79,18 +79,22 @@ def subplot_history(sub, val, trn, view, view_tot, c_unit, c_unit_power, unit, l
             x_max = max(val.epochs[-1], trn.epochs[-1]) if view_tot.x_max is None else view_tot.x_max        
             ax1.set_xlim(view_tot.x_min, x_max)
 
-    if kind == 'loss':
-        
-        best_loss  = f"{val.best.loss:.4f}"    if val.best.loss is not None  else "?"
-        loss_val   = f"{val.losses[-1]:.4f}"   if len(val.losses)  else "?"
-        loss_trn   = f"{trn.losses[-1]:.4f}"   if len(trn.losses)  else "?"
-        plt.title(f"loss = (min: {best_loss} [{val.best.loss_epochs}], val: {loss_val}, trn: {loss_trn})", fontsize=12, pad=-2)
+    if kind == 'loss':        
+        best_loss   = f"{val.best.loss:.4f}"    if val.best.loss is not None  else "?"
+        loss_val    = f"{val.losses[-1]:.4f}"   if len(val.losses)  else "?"
+        loss_trn    = f"{trn.losses[-1]:.4f}"   if len(trn.losses)  else "?"
+        loss_trn_av = f"{np.mean(trn.losses[-30:]):.3f}"   if len(trn.losses)  else "?"
+        loss_val_av = f"{np.mean(val.losses[-30:]):.3f}"   if len(val.losses)  else "?"
+        plt.title(f"min: {best_loss} [{val.best.loss_epochs}], val: {loss_val_av}({loss_val}), trn: {loss_trn_av}({loss_trn})", fontsize=10, pad=-2)
 
     if kind == 'score':        
         best_score = f"{val.best.score:.4f}"   if val.best.score is not None else "?"
         score_val  = f"{val.scores[-1]:.4f}"   if len(val.scores) else "?"
         score_trn  = f"{trn.scores[-1]:.4f}"   if len(trn.scores) else "?"
-        plt.title(f"score = (bst: {best_score} [{val.best.score_epochs}], val: {score_val},  trn: {score_trn})", fontsize=12, pad=-2)
+        score_trn_av = f"{np.mean(trn.scores[-30:]):.3f}"   if len(trn.losses)  else "?"
+        score_val_av = f"{np.mean(val.scores[-30:]):.3f}"   if len(val.losses)  else "?"
+
+        plt.title(f"bst: {best_score} [{val.best.score_epochs}], val: {score_val_av}({score_val}),  trn:  {score_trn_av}({score_trn})", fontsize=10, pad=-2)
 
     y_min, y_max = view.y_min, view.y_max
     ax1.set_xlabel(fr"$10^{c_unit_power:.0f}$ samples" if unit=='samples' else 'epochs'); ax1.set_ylabel(kind);                     
@@ -179,6 +183,7 @@ def plot_smooth_line(ax=None, x=[],y=[], color="black", label="", count=200, ker
         avg_y = pool(torch.Tensor(y).view(1,-1)).flatten().numpy()
         avg_x = pool(torch.Tensor(x).view(1,-1)).flatten().numpy()
         
+        """
         sx, sxx = avg_x[-num:].sum(), (avg_x[-num:]*avg_x[-num:]).sum()
         sy, sxy = avg_y[-num:].sum(), (avg_x[-num:]*avg_y[-num:]).sum()
         d = num*sxx - sx*sx
@@ -187,7 +192,7 @@ def plot_smooth_line(ax=None, x=[],y=[], color="black", label="", count=200, ker
             a = (sy - b*sx) / num                                     # даже при stride=1 график отстаёт                  
             avg_x = np.append(avg_x, [ x[-1] ])                       # из-за усреднения x            
             avg_y = np.append(avg_y, [a + b*x[-1]])
-                
+        """     
         ax.plot(avg_x, avg_y, color, linewidth=width, label=label)    
         
 

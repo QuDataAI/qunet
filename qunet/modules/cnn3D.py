@@ -1,7 +1,7 @@
 import copy
 import torch, torch.nn as nn
 
-from ..utils   import Config
+from ..config   import Config
 
 class CNN3DBlock(nn.Module):
     def __init__(self, in_channels,  out_channels, kernel = 3, stride = 1, layers=2,  mode = 'zeros',  batchnorm=True, bias=False, residual=0):
