@@ -2,6 +2,7 @@
 from pathlib import Path
 from   tqdm.auto import tqdm
 import numpy as np, matplotlib.pyplot as plt
+from scipy.signal import savgol_filter
 import torch, torch.nn as nn
 
 from .config   import Config
@@ -101,12 +102,11 @@ class Trainer:
             x_min = 0,                 # minimum value in samples on the x-axis (if < 0 last x_min samples)
             x_max = None,              # maximum value in samples on the x-axis (if None - last)
             smooth = Config(
-                count  = 200,          # if the number of points exceeds count - draw a smooth line
-                kern   = 51,           # averaging kernel (how many points are averaged)
-                stride = 1,            # averaging step
+                count  = 100,          # if the number of points exceeds count - draw a smooth line
+                win    = 21,
+                power   = 3, 
                 width  = 1.5,          # line thickness
                 alpha  = 0.5,          # source data transparency
-                num    = 10,           # number of last points for "extrapolation"
             ),
             loss = Config(
                 show  = True,          # show loss subplot
@@ -309,7 +309,7 @@ class Trainer:
 
     #---------------------------------------------------------------------------
 
-    def fit_one_epoch(self, model, data,  train=True, accumulate=1, state=None, verbose=1):
+    def fit_one_epoch(self, model, data,  train=True, accumulate=1, states=[], verbose=1):
         """
         Args
         ------------
@@ -382,7 +382,7 @@ class Trainer:
                         scaler.step(self.optim)     # подправляем параметры
                         scaler.update()             # Updates the scale for next iteration
 
-                    if state is not None:
+                    for state in states:
                         state.update()
 
                     self.optim.zero_grad()          # обнуляем градиенты
@@ -593,7 +593,7 @@ class Trainer:
 
             monitor = [],
             patience = None,
-            state = None,
+            states = [],
             period_state: int=0):
         """
         Args
@@ -638,6 +638,9 @@ class Trainer:
         assert self.data.trn is not None, "Define data.trn first"
         assert len(self.data.trn) > 0,    "You don't have a single training batch!"
 
+        if type(states) not in [list, tuple]:
+            states = [states]
+
         for callback in self.callbacks:
             callback.on_fit_start(self, self.model)
 
@@ -667,7 +670,7 @@ class Trainer:
             for callback in self.callbacks:
                 callback.on_train_epoch_start(self, self.model)
 
-            losses, scores, counts, (samples_trn,steps_trn,tm_trn) = self.fit_one_epoch(self.model, self.data.trn, train=True, state=state)            
+            losses, scores, counts, (samples_trn,steps_trn,tm_trn) = self.fit_one_epoch(self.model, self.data.trn, train=True, states=states)            
             loss_trn, score_trn = self.mean(losses, scores, counts)
             lr = self.scheduler.get_lr()
             self.add_hist(self.hist.trn, self.data.trn.batch_size, samples_trn, steps_trn, tm_trn, loss_trn, score_trn, lr)
@@ -740,8 +743,9 @@ class Trainer:
                     for callback in self.callbacks:
                         callback.on_after_plot(self, self.model)
                 self.stat()
-            if (state is not None) and period_state > 0 and  (self.epoch % period_state == 0 or epoch == epochs):
-                state.plot()            
+            if len(states) and period_state > 0 and  (self.epoch % period_state == 0 or epoch == epochs):
+                for state in states:
+                    state.plot()            
 
             if self.folders.point and 'point' in monitor and (period_point > 0 and point_start < self.epoch and self.epoch % period_point == 0 or epoch == epochs):
                 for callback in self.callbacks:
@@ -770,8 +774,9 @@ class Trainer:
                     for callback in self.callbacks:
                         callback.on_after_plot(self, self.model)
                     self.stat()
-                if period_state > 0 and state is not None:
-                    state.plot()
+                if period_state > 0:
+                    for state in states:
+                        state.plot()
                 break
 
         if period_plot <= 0:
@@ -789,7 +794,7 @@ class Trainer:
         """
         view = view or self.view
         hist = hist or self.hist
-        plot_history(hist, view, fname)
+        plot_history(hist, view, fname, self.score_max)
 
     #---------------------------------------------------------------------------
 
@@ -797,9 +802,31 @@ class Trainer:
         if newline:
             print()
 
+        trn_loss_bst,  trn_loss_epo,   val_loss_bst, val_loss_epo   = 0, 0, 0, 0
+        trn_score_bst, trn_score_epo, val_score_bst, val_score_epo = 0, 0, 0, 0
+
+        # best smoothing metrics
+        if len(self.hist.trn.losses) > self.view.smooth.win:
+            smooth = savgol_filter(self.hist.trn.losses, self.view.smooth.win, self.view.smooth.power)        
+            trn_loss_epo = np.argmin(smooth)
+            trn_loss_bst = smooth[trn_loss_epo]        
+        if len(self.hist.val.losses) > self.view.smooth.win:
+            smooth = savgol_filter(self.hist.val.losses, self.view.smooth.win, self.view.smooth.power)        
+            val_loss_epo = np.argmin(smooth)
+            val_loss_bst = smooth[val_loss_epo]
+        if len(self.hist.trn.scores) > self.view.smooth.win:
+            smooth = savgol_filter(self.hist.trn.scores, self.view.smooth.win, self.view.smooth.power)        
+            trn_score_epo = np.argmax(smooth) if self.score_max else np.argmin(smooth)
+            trn_score_bst = smooth[trn_score_epo]        
+        if len(self.hist.val.scores) > self.view.smooth.win:
+            smooth = savgol_filter(self.hist.val.scores, self.view.smooth.win, self.view.smooth.power)        
+            val_score_epo = np.argmax(smooth) if self.score_max else np.argmin(smooth)
+            val_score_bst = smooth[val_score_epo]
+
+        # last 
         trn_loss_avr,  trn_loss_std,  val_loss_avr,  val_loss_std  = 0, 0, 0, 0
         trn_score_avr, trn_score_std, val_score_avr, val_score_std = 0, 0, 0, 0
-        n = 30
+        n = self.view.smooth.win
         if len(self.hist.trn.losses) > 1:
             trn_loss_avr = np.mean(self.hist.trn.losses[-n:]);  trn_loss_std = np.std(self.hist.trn.losses[-n:])
         if len(self.hist.val.losses) > 1:
@@ -809,19 +836,17 @@ class Trainer:
         if len(self.hist.val.scores) > 1:
             val_score_avr = np.mean(self.hist.val.scores[-n:]);  trn_score_std = np.std(self.hist.val.scores[-n:])
 
-        if self.data.val is not None:                 # есть валидационные данные
-            if self.hist.val.best.score is not None:  # есть score
-                print(f"val_loss: bst = {self.hist.val.best.loss:.6f}[{self.hist.val.best.loss_epochs or ' '}], lst30 = {val_loss_avr:.4f} ± {val_loss_std:.4f};  val_score: bst = {self.hist.val.best.score:.6f}[{self.hist.val.best.score_epochs or ' '}],  lst30 = {val_score_avr:.4f} ± {val_score_std:.4f}")            
-            else:                                     # только loss
-                print(f"val_loss: bst = {self.hist.val.best.loss:.6f}[{self.hist.val.best.loss_epochs or ' '}], lst30 = {val_loss_avr:.4f} ± {val_loss_std:.4f}")
-
-            if self.hist.val.best.score_ema is not None:
-                print(f"ema: loss={self.hist.val.best.loss_ema or 0.0:.6f}, score={self.hist.val.best.score_ema or 0.0:.6f}")
-
-        if self.hist.trn.best.score is not None:     # есть score
-            print(f"trn_loss: bst = {self.hist.trn.best.loss:.6f}[{self.hist.trn.best.loss_epochs or ' '}], lst30 = {trn_loss_avr:.4f} ± {trn_loss_std:.4f};  trn_score: bst = {self.hist.trn.best.score:.6f}[{self.hist.trn.best.score_epochs or ' '}],  lst30 = {trn_score_avr:.4f} ± {trn_score_std:.4f}")            
-        else:                                        # только loss
-            print(f"trn_loss: bst = {self.hist.trn.best.loss:.6f}[{self.hist.trn.best.loss_epochs or ' '}], lst30 = {trn_loss_avr:.4f} ± {trn_loss_std:.4f}")            
+        if self.data.val is not None and self.hist.val.best.loss is not None:                                                 
+            print(f"val_loss:  best = {self.hist.val.best.loss:.6f}[{self.hist.val.best.loss_epochs or ' '}], smooth{n} = {val_loss_bst:.6f}[{val_loss_epo}], last{n} = {val_loss_avr:.6f} ± {val_loss_std:.6f}")                    
+        if self.data.trn is not None and self.hist.trn.best.loss is not None:                                         
+            print(f"trn_loss:  best = {self.hist.trn.best.loss:.6f}[{self.hist.trn.best.loss_epochs or ' '}], smooth{n} = {trn_loss_bst:.6f}[{trn_loss_epo}], last{n} = {trn_loss_avr:.6f} ± {trn_loss_std:.6f}")
+        if self.data.val is not None and self.hist.val.best.score is not None:   
+            print(f"val_score: best = {self.hist.val.best.score:.6f}[{self.hist.val.best.score_epochs or ' '}], smooth{n} = {val_score_bst:.6f}[{val_score_epo}], last{n} = {val_score_avr:.6f} ± {val_score_std:.6f}")
+        if self.data.trn is not None and self.hist.trn.best.score is not None:     # есть score            
+            print(f"trn_score: best = {self.hist.trn.best.score:.6f}[{self.hist.trn.best.score_epochs or ' '}], smooth{n} = {trn_score_bst:.6f}[{trn_score_epo}], last{n} = {trn_score_avr:.6f} ± {trn_score_std:.6f}")            
+        
+        if self.hist.val.best.score_ema is not None:
+            print(f"ema: loss={self.hist.val.best.loss_ema or 0.0:.6f}, score={self.hist.val.best.score_ema or 0.0:.6f}")
 
         print(f"epochs={self.epoch}, samples={self.hist.samples}, steps={self.hist.steps}")
         t_steps = f"{self.hist.time.trn*1_000/self.hist.steps:.2f}"   if self.hist.steps > 0 else "???"

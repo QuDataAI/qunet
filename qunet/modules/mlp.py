@@ -1,4 +1,4 @@
-﻿import math, copy
+﻿import copy
 import numpy as np, matplotlib.pyplot as plt
 import torch, torch.nn as nn
 
@@ -15,8 +15,7 @@ class UnitTensor(nn.Module):
 
 class MLP(nn.Module):
     def __init__(self,  *args, **kvargs) -> None:
-        """
-        Fully connected network with one or more hidden layers:
+        """Fully connected network with one or more hidden layers:
         (B,*, input) -> (B,*, output).
 
         Args
@@ -61,6 +60,12 @@ class MLP(nn.Module):
         self.cfg = MLP.default()
         self.cfg.set(*args, **kvargs)
         self.create()
+
+        self.beta = 0.9    # степень усреднения (сглаживания) [0...1]
+        self.datas_w = []  # усреднённые значения длин весов    weight
+        self.datas_b = []  # усреднённые значения длин смещений bias
+        self.grads_w = []  # усреднённые значения длин градиентов весов    weight
+        self.grads_b = []  # усреднённые значения длин градиентов смещений bias
 
     #---------------------------------------------------------------------------
 
@@ -115,7 +120,84 @@ class MLP(nn.Module):
                         nn.Dropout(self.cfg.drop)     ]
                 if self.cfg.norm:
                     seq += [ UnitTensor() ]
-        self.layers = nn.Sequential(*seq)
+        self.layers = nn.Sequential(*seq)        
+
+    #---------------------------------------------------------------------------
+
+    def update(self):
+        """
+        Вызывается тренереном перед обнулением градиентов, если модуль добавлен fit(states=[])
+        """
+        i = 0
+        for layer in self.layers:
+            if type(layer) == nn.Linear:
+                w = layer.weight.detach().square().mean().sqrt()
+                if len(self.datas_w) == i: self.datas_w.append(w)                    
+                else:
+                    self.datas_w[i] = self.beta * self.datas_w[i]  + (1-self.beta) * w
+
+                if layer.weight.grad is None: g = 0                    
+                else:                         g = layer.weight.grad.square().mean().sqrt()
+                if len(self.grads_w) == i: self.grads_w.append(g)                    
+                else:
+                    self.grads_w[i] = self.beta * self.grads_w[i]  + (1-self.beta) * g
+                
+                g, b = 0, 0
+                if layer.bias is not None:
+                    b = layer.bias.detach().square().mean().sqrt()
+
+                    if layer.bias.grad is None: g = 0                    
+                    else:                       g = layer.bias.grad.square().mean().sqrt()                    
+
+
+                if len(self.datas_b) == i:  self.datas_b.append(b)                    
+                else:
+                    self.datas_b[i] = self.beta * self.datas_b[i]  + (1-self.beta) * b                
+
+                if len(self.grads_b) == i:  self.grads_b.append(g)                    
+                else:
+                    self.grads_b[i] = self.beta * self.grads_b[i]  + (1-self.beta) * g
+    
+                i += 1
+        
+    #---------------------------------------------------------------------------
+
+    def plot(self, w=12, h=3, eps=1e-8):
+        fig, ax = plt.subplots(1,1, figsize=(w, h))        
+        x = np.arange(len(self.datas_w))
+        if self.datas_w:           
+            ax.plot(x, np.array(self.datas_w).transpose(),  "-b.", lw=2,  label="weight")
+            ax.set_ylim(bottom=0)   # after plot !!!            
+            ax.set_ylabel("weight", color='b')
+            ax.tick_params(axis='y', colors='b')
+            ax.set_xticks(x)
+            ax.grid(ls=":")
+
+        if self.datas_b:           
+            ax1 = ax.twinx()            
+            ax1.plot(x, np.array(self.datas_b).transpose(), "-g.", label="bias")
+            ax1.spines["left"].set_position(("outward", 40))
+            ax1.spines["left"].set_visible(True)
+            ax1.yaxis.set_label_position('left')
+            ax1.yaxis.set_ticks_position('left')
+            ax1.set_ylabel("bias", color='g')
+            ax1.tick_params(axis='y', colors='g')
+
+        if self.grads_w:
+            ax2 = ax.twinx()            
+            ax2.plot(x, np.array(self.grads_w).transpose(), "--b.", mfc='r', mec='r', label="grad")
+            ax2.set_ylim(bottom=0)   # after plot !!!
+            ax2.set_ylabel("--- grad weight",  color='r')
+            ax2.tick_params(axis='y', colors='r')
+
+        if self.grads_b:
+            ax3 = ax.twinx()            
+            ax3.plot(x, np.array(self.grads_b).transpose(), "--g.", mfc='r', mec='r', label="grad")
+            ax3.spines["right"].set_position(("outward", 50))
+            ax3.set_ylabel("--- grad bias", color='r')
+            ax3.tick_params(axis='y', colors='r')
+
+        plt.show()
 
     #---------------------------------------------------------------------------
 
@@ -183,36 +265,37 @@ class ResBlockMLP(nn.Module):
             else:                   self.avr_dx = b * self.avr_dx + b1 * v_dx
         
         if self.training and self.std > 0:
-            return self.mult * x  + dx * (1+torch.randn(1, device=x.device)*self.std)
+            return self.mult * x  + dx * (1+torch.randn((x.size(0),1), device=x.device)*self.std)
         else:
             return self.mult * x  + dx
     
     #---------------------------------------------------------------------------
 
-    def backward_hook(self, module, grad_input, grad_output):
+    def update(self):
+        """
+        Вызывается тренереном перед обнулением градиентов, если модуль добавлен fit(states=[])
+        """
+
         i = 0
-        for layer in module:
+        for layer in self.mlp:
             if type(layer) == nn.Linear:
-                g = torch.sqrt(torch.square(layer.weight.grad).mean()).cpu().item()
+                if layer.weight.grad is None:
+                    g = 0                    
+                else:
+                    g = layer.weight.grad.square().mean().sqrt()
                 if len(self.grads) == i:
-                    self.grads.append(g)
-                    i += 1
+                    self.grads.append(g)                    
                 else:
                     self.grads[i] = self.cfg.beta * self.grads[i]  + (1-self.cfg.beta) * g
 
-    #---------------------------------------------------------------------------
+                d = layer.weight.detach().square().mean().sqrt()
+                if len(self.datas) == i:                    
+                    self.datas.append(d)                    
+                else:
+                    self.datas[i] = self.beta * self.datas[i]  + (1-self.beta) * d
 
-    def add_hook(self):
-        if self.__hook is None:
-            self.__hook = self.mlp.layers.register_full_backward_hook(self.backward_hook)
+                i += 1
 
-    #---------------------------------------------------------------------------
-
-    def remove_hook(self):
-        if self.__hook is not None:
-            self.__hook.remove()
-            self.__hook  = None
-            self.grads = []
 
 #========================================================================================    
 
@@ -240,6 +323,9 @@ class ResMLP(nn.Module):
         assert cfg.mlp.input == cfg.mlp.output, f"In mlp should be input ({cfg.mlp.input}) == output ({cfg.mlp.output})"
 
         self.blocks = nn.ModuleList([  ResBlockMLP(mlp=cfg.mlp) for _ in range(cfg.n_blocks) ]) 
+        self.out = None
+        if cfg.out is not None:
+            self.out = MLP(cfg.out)
         self.mult(cfg.mults)   
         self.std(cfg.stds)       
 
@@ -249,7 +335,8 @@ class ResMLP(nn.Module):
     def default():
         return copy.deepcopy(Config(
             n_blocks = 1,
-            mlp = MLP.default(),             
+            mlp = MLP.default(),   
+            out = None,          
             beta  = 0.9,
             mults = 1.0,     # can be list
             stds  = 0.0,     # can be list
@@ -260,6 +347,8 @@ class ResMLP(nn.Module):
     def forward(self, x):
         for block in self.blocks:            
             x = block(x)
+        if self.out is not None:
+            x = self.out(x)
         return x
     
     #---------------------------------------------------------------------------
@@ -267,9 +356,7 @@ class ResMLP(nn.Module):
     def debug(self, value=True, beta=None):
         for block in self.blocks:
             block.debug = value
-            if value:
-                block.add_hook()    
-            else:
+            if not value:
                 block.avr_x = block.avr_dx  = None        
                 block.grads  = []
 
@@ -279,6 +366,17 @@ class ResMLP(nn.Module):
     #---------------------------------------------------------------------------
 
     def std(self, stds, i=None):
+        """
+        Set std value (agumentation) for all blocks or i-th
+
+        Example
+        ------------
+        ```
+            cnn.std( 0.2 )              # equal value for all block 
+            cnn.std( [0.2, 0.1, 0.1] )  # some  value for each block 
+            cnn.std( 0.2, 5)            # for 5-th block (from 0)
+        ```        
+        """
         if i is not None:
             assert type(stds) in [float, int] and i >=0 and i < self.cfg.n_blocks, f"Wrong stds={stds} for i={i}"    
             self.blocks[i].std.fill_(float(stds))
@@ -288,7 +386,7 @@ class ResMLP(nn.Module):
             stds = [stds] * self.cfg.n_blocks
 
         assert type(stds) in [list, tuple] and len(stds) == self.cfg.n_blocks, f"Wrong stds={stds}"
-        for block,std in zip(self.blocks, stds):
+        for block, std in zip(self.blocks, stds):
             block.std.fill_(float(std))          
 
     #---------------------------------------------------------------------------
@@ -308,15 +406,9 @@ class ResMLP(nn.Module):
 
     #---------------------------------------------------------------------------
 
-    def add_hook(self):
+    def update(self):
         for block in self.blocks:
-            block.add_hook()    
-
-    #---------------------------------------------------------------------------
-
-    def remove_hook(self):
-        for block in self.blocks:
-            block.remove_hook()    
+            block.update()    
 
     #---------------------------------------------------------------------------
 
@@ -326,19 +418,20 @@ class ResMLP(nn.Module):
         plt.text(0,0,f" mult\n std\n", ha='left', transform = ax.transAxes, fontsize=8)
         weights, dx = [], []
         for i,block in enumerate(self.blocks):
-            ww = [ ]
-            for layer in block.mlp.layers:
-                if type(layer) == nn.Linear:
-                    ww.append(torch.sqrt((layer.weight.data ** 2).mean()).cpu().item())
+            ww = [d.cpu().item() for d in block.datas]
             weights.append(ww)
-            dx.append( block.avr_dx/(block.avr_x+eps) )
+            ma = max(ma, len(ww))
+            weights.append(ww)
+            if block.avr_dx is not None:
+                dx.append( (block.avr_dx/(block.avr_x+eps)).cpu().item() )
 
             plt.text(i,0,f"{block.mult.item():.2f}\n{block.std.item():.2f}\n", ha='center', fontsize=8)
 
         idxs = np.arange(self.cfg.n_blocks)        
         ax.set_xticks(idxs)
-        ax.bar(idxs, dx, alpha=0.8, color="lightgray", ec="black")
-        ax.set_ylim(0, np.max(np.array(dx).flatten())*1.1) 
+        if len(dx):
+            ax.bar(idxs, dx, alpha=0.8, color="lightgray", ec="black")
+            ax.set_ylim(0, np.max(np.array(dx).flatten())*1.1) 
         ax.set_ylabel("dx/x");  ax.set_xlabel("blocks");
         ax.grid(ls=":")
 
@@ -350,7 +443,11 @@ class ResMLP(nn.Module):
         ax2.set_ylim(0, weights.flatten().max()*1.1) 
         ax2.legend(loc='upper right')
 
-        grads = [ block.grads for block in self.blocks if len(block.grads) ]
+        grads, ma = [], 0
+        for block in self.blocks:                    
+            grads.append([ g.cpu().item() for g in block.grads])
+            ma = max(ma, len(block.grads))
+        
         if len (grads):
             grads = np.array(grads).transpose()            
             ax3 = ax.twinx() 
@@ -360,7 +457,6 @@ class ResMLP(nn.Module):
             ax3.set_ylim(0, grads.flatten().max()*1.1) 
             ax3.set_ylabel("--- |grad|")            
             
-
         plt.show()
     #---------------------------------------------------------------------------
 

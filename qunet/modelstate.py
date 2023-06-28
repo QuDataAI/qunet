@@ -64,13 +64,21 @@ class ModelState:
                 'numel': p.numel(),
                 'is_grad': p.requires_grad,
                 'shape': tuple(p.shape),
-                'data' : torch.square(p.data).sum().cpu(),
-                'min'  : p.data.abs().min().cpu(),
-                'max'  : p.data.abs().max().cpu(),
-                'grad' : 0,
+                'data' : p.data.square().sum(),
+                'min'  : p.data.abs().min(),
+                'max'  : p.data.abs().max(),
+                'grad' : torch.tensor(0.),
             }
             if p.grad is not None:
-                self.__params[n]['grad'] = torch.square(p.grad).sum().cpu()
+                self.__params[n]['grad'] = p.grad.square().sum()
+
+    #---------------------------------------------------------------------------
+
+    def get_params(self):
+        return self.__params
+    
+    def get_layers(self):
+        return self.__layers
 
     #---------------------------------------------------------------------------
 
@@ -83,24 +91,25 @@ class ModelState:
             self.reset()
             return
 
-        w1, w2 = 1-self.beta, self.beta
+        w1, w2 = self.beta, 1-self.beta
         for n, p in model.named_parameters():
             param = self.__params[n]
-            param['data'] = w1 * param['data'] + w2 * torch.square(p.data).sum().cpu()
-            param['min']  = w1 * param['min']  + w2 * p.data.abs().min().cpu()
-            param['max']  = w1 * param['max']  + w2 * p.data.abs().max().cpu()
+            param['data'] = w1 * param['data'] + w2 * p.data.square().sum()
+            param['min']  = w1 * param['min']  + w2 * p.data.abs().min()
+            param['max']  = w1 * param['max']  + w2 * p.data.abs().max()
             if p.grad is not None:
                 if 'grad' not in param:
-                    param['grad'] = torch.square(p.grad).sum().cpu()
+                    param['grad'] = p.grad.square().sum()
                 else:
-                    param['grad'] = w1 * param['grad'] + w2 * torch.square(p.grad).sum().cpu()
+                    param['grad'] = w1 * param['grad'] + w2 * p.grad.square().sum()
 
     #---------------------------------------------------------------------------
 
     def sum_values(self, params, kind='numel'):
         tot = 0
         for n in params:
-            tot += self.__params[n][kind]
+            v = self.__params[n][kind]            
+            tot += v.cpu().item() if torch.is_tensor(v) else v
         return tot
 
     #---------------------------------------------------------------------------
@@ -152,11 +161,11 @@ class ModelState:
 
         for name, param in self.__params.items():
             group = names[name]
-            groups[group]['numel'].append(param['numel'])
-            groups[group]['data'] .append( param['data'] )
-            groups[group]['grad'] .append( param['grad'] )
-            groups[group]['min']  .append( param['min'])
-            groups[group]['max']  .append( param['max'])
+            groups[group]['numel'].append( param['numel'])
+            groups[group]['data'] .append( param['data'].cpu() )
+            groups[group]['grad'] .append( param['grad'].cpu() )
+            groups[group]['min']  .append( param['min'].cpu())
+            groups[group]['max']  .append( param['max'].cpu())
             groups[group]['shape'].append( param['shape'])
             groups[group]['is_grad'].append( param['is_grad'])
 
@@ -304,7 +313,7 @@ class ModelState:
         descr = "param" + " "*(ma-5) + "   value            num  shape"
         print(descr)
         for k,v in self.model.state_dict().items():
-            val = v if v.numel() < 2 else torch.sqrt(torch.square(v).mean())
+            val = v if v.numel() < 2 else v.square().mean().sqrt()
             print(f"{k+' '*(ma-len(k))} {val.item():8.4f}  {ModelState.i2s(v.numel(),12)}  {tuple(v.shape)}")
 
     #---------------------------------------------------------------------------
@@ -387,7 +396,7 @@ class ModelState:
 
     #---------------------------------------------------------------------------
 
-    def params(self, agg=None):
+    def params(self, agg=None, info=False):
         """
         Display information about model parameters
 
@@ -395,18 +404,20 @@ class ModelState:
         ------------
             agg (int=None):
                 cut off the agg of the last levels of the parameter name to aggregate them (level0.weight -> level0)
+            info(bool=False):
+                return some details
         """
         groups = self.aggregate(agg=agg)
         num = self.num_params(True)
         w = max([len(n) for n in groups.keys() ])
-        print(f"  # {' '*w}      params          |mean|  [     min,      max ]  |grad|   shape")
+        print(f"  # {' '*w}       params          |mean|  [     min,      max ]  |grad|   shape")
         print("-"*(w+50))
         for i, (name, group) in enumerate(groups.items()):
             nm = name + " "*(w-len(name))
             prc = 100*group['numel']/num
             prc = f"~{prc:3.0f}%" if prc > 0.5 else "     "
-            grad = f"{group['grad']:8.1e}" if group['is_grad'] > 0 else "-"*8
-            print(f"{i:3d}: {nm}  {ModelState.i2s(group['numel'],9)} {prc}  {group['data']:8.3f}  [{group['min']:8.3f}, {group['max']:8.3f}]  {grad}  {group['shape']}  ")
+            grad = f"{group['grad'].cpu():8.1e}" if group['is_grad'] > 0 else "-"*8
+            print(f"{i:3d}: {nm}  {ModelState.i2s(group['numel'],10)} {prc}  {group['data'].cpu():8.3f}  [{group['min'].cpu():8.3f}, {group['max'].cpu():8.3f}]  {grad}  {group['shape']}  ")
 
         print("="*(w+12+4))
         n1, n2, n3 = self.num_params(True),  self.num_params(False),  self.num_params(None)
@@ -415,11 +426,12 @@ class ModelState:
             print(f"{'other:'+' '*(w-11+4)}     {ModelState.i2s(n2,12)}")
             print(f"{'total:'+' '*(w-11+4)}     {ModelState.i2s(n3,12)}")
 
-        return groups
+        if info:
+            return groups
 
     #---------------------------------------------------------------------------
 
-    def plot(self, agg=None, data=True, grad=True, alpha=0.5, w=12, h=3):
+    def plot(self, agg=None, data=True, grad=True, alpha=0.5, w=12, h=3, info=False):
         """
         Draw a graph of the number of parameters, the average value of their modulus and the average value of the modulus of the gradient
 
@@ -433,8 +445,10 @@ class ModelState:
                 show average absolute value of gradients
             alpha (float=0.5):
                 transparency for bars of the number of elements in the parameter tensor
-            w,h (int):
+            w,h (int = 12,3):
                 chart width and height
+            info (bool=False):
+                return numel, data, grad
 
         """
         groups = self.aggregate(agg=agg)
@@ -480,6 +494,10 @@ class ModelState:
             ax2.tick_params(axis='y', colors='r')
 
         plt.show()
+
+        if info:
+            return numel, data, grad
+
 
     #---------------------------------------------------------------------------
 
@@ -568,3 +586,14 @@ class ModelState:
 когда модель сохраняется в файле для последующей загрузки.
 В нём присутствуют только данные и нет информации о градиентах, однако параметры есть все, включая не обучаемые.
 """
+
+
+
+if __name__ == '__main__':    
+    model = nn.Sequential(nn.Linear(10, 2), nn.GELU(), nn.Dropout(), nn.Linear(2, 1))
+    state = ModelState(model)
+    print(state.num_params())
+    state.layers(2)
+    state.params()
+    #state.plot()
+

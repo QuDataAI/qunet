@@ -205,7 +205,6 @@ class FFT(nn.Module):
 
 #===============================================================================
 
-
 class  TransformerBlock(nn.Module):
     """
     One Transformer Block (it is all you need: fft, attention, mlp)
@@ -319,7 +318,6 @@ class  TransformerBlock(nn.Module):
             else:                      # constant multiplayer (0 or 1)
                 self.register_buffer("w_att", torch.tensor(float(cfg.att.res)))
 
-
         if cfg.is_mlp:
             self.ln_2 = nn.LayerNorm(cfg.att.E)
             self.mlp  = MLP(cfg.mlp)
@@ -347,13 +345,21 @@ class  TransformerBlock(nn.Module):
         Наверное как у Карпатова правильнее (нормируем перед вычислениями).
         """
         if self.cfg.is_fft:
-            x = x * self.w_fft + self.fft(self.ln_0(x))
+            x = x * self.w_fft + self.fft( self.ln_0(x) )
+
         if self.cfg.is_att:
-            x = x * self.w_att + self.att(self.ln_1(x))
+            x = x * self.w_att + self.att( self.ln_1(x) )
+
         if self.cfg.is_mlp:
-            x = x * self.w_mlp + self.mlp(self.ln_2(x))
+            x = x * self.w_mlp + self.mlp( self.ln_2(x) )
+
         return x                                            # (B,T,E)
 
+    #---------------------------------------------------------------------------
+
+    def update(self):
+        if self.cfg.is_mlp:
+            self.mlp.update()
     #---------------------------------------------------------------------------
 
     def unit_test():
@@ -418,7 +424,7 @@ class  Transformer(nn.Module):
 
         # В set не передаём kvargs, чтобы не было ворнингов по E, H и т.д.
         if 'n_blocks' in kvargs:
-            self.cfg.n_blocks      = kvargs['n_blocks']
+            self.cfg.n_blocks    = kvargs['n_blocks']
         if 'is_fft' in kvargs:
             self.cfg.is_fft      = kvargs['is_fft']
         if 'is_att' in kvargs:
@@ -490,6 +496,17 @@ class  Transformer(nn.Module):
         for block in self.blocks:
             x = block(x)                           # (B,T,E)
         return x
+
+    #---------------------------------------------------------------------------
+
+    def update(self):
+        for block in self.blocks:
+            block.update() 
+
+    #---------------------------------------------------------------------------
+
+    def plot(self):
+        pass
 
     #---------------------------------------------------------------------------
 

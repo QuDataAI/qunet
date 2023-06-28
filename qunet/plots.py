@@ -1,5 +1,6 @@
 ﻿import os, math, copy, time, datetime
 import numpy as np, matplotlib.pyplot as plt
+from scipy.signal import savgol_filter
 import torch, torch.nn as nn
 from   tqdm.auto import tqdm
 
@@ -30,7 +31,7 @@ def plot_histogram( x, x_sub=None, pref="", digits=1, w=12, h=3, bins=50, bins_s
 
 #---------------------------------------------------------------------------
 
-def plot_history(hist, view, fname=""):
+def plot_history(hist, view, fname="", score_max=True):
     """
     """    
     samples, steps             = hist.samples, hist.steps
@@ -55,12 +56,12 @@ def plot_history(hist, view, fname=""):
     plt.suptitle(fr"samples={samples}, steps:{steps}; lr={lr}; batch=(trn:{bs_trn}, val:{bs_val}); time=(trn:{tm_trn}, val:{tm_val}){t_unit}/$10^{c_unit_power:.0f}$; params={hist.params/1e3:.0f}k", fontsize = 10)
 
     if  not view.loss.show:
-        subplot_history(111, val, trn, view=view.score, view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='score')
+        subplot_history(111, val, trn, view=view.score, view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='score', best_max=score_max)
     elif not view.score.show or (len(hist.trn.scores)==0 and len(hist.val.scores)==0):
-        subplot_history(111, val, trn, view=view.loss,  view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='loss')
+        subplot_history(111, val, trn, view=view.loss,  view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='loss', best_max=False)
     else:
-        subplot_history(121, val, trn, view=view.loss,  view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='loss')            
-        subplot_history(122, val, trn, view=view.score, view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='score')        
+        subplot_history(121, val, trn, view=view.loss,  view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='loss', best_max=False)            
+        subplot_history(122, val, trn, view=view.score, view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='score', best_max=score_max)        
     if fname:
         plt.savefig(fname, bbox_inches='tight')
     else:
@@ -68,7 +69,7 @@ def plot_history(hist, view, fname=""):
 
     #---------------------------------------------------------------------------    
 
-def subplot_history(sub, val, trn, view, view_tot, c_unit, c_unit_power, unit, labels, kind):                
+def subplot_history(sub, val, trn, view, view_tot, c_unit, c_unit_power, unit, labels, kind, best_max):                
     
     ax1 = plt.subplot(sub); ax1.grid(ls=':')                           
     if len(val.samples) > 0 and len(trn.samples) > 0:        
@@ -110,12 +111,12 @@ def subplot_history(sub, val, trn, view, view_tot, c_unit, c_unit_power, unit, l
     if len(trn.samples):                      # trn
         x = np.array(trn.samples)/c_unit if unit=='sample' else np.array(trn.epochs)
         y = trn.losses if kind=='loss' else trn.scores    
-        plot_smooth_line(ax1, x,y, 'darkblue', label=kind+'_trn', **view_tot.smooth.get_dict())            
+        plot_smooth_line(ax1, x,y, 'darkblue', label=kind+'_trn', best_max=best_max, **view_tot.smooth.get_dict())            
 
     if len(val.samples):                      # val
         x = np.array(val.samples)/c_unit if unit=='sample' else np.array(val.epochs)
         y = val.losses if kind=='loss' else val.scores        
-        plot_smooth_line(ax1, x,y, 'g', label=kind+'_val', **view_tot.smooth.get_dict())
+        plot_smooth_line(ax1, x,y, 'g', label=kind+'_val', best_max=best_max, **view_tot.smooth.get_dict())
 
 
     ax1.legend(loc='upper left', frameon = False)
@@ -168,7 +169,7 @@ def subplot_history(sub, val, trn, view, view_tot, c_unit, c_unit_power, unit, l
             ax2.minorticks_off() # for log scale         
 
 
-def plot_smooth_line(ax=None, x=[],y=[], color="black", label="", count=200, kern=51, stride=1, width=1.5, alpha=0.5, num=10):    
+def plot_smooth_line(ax=None, x=[],y=[], color="black", label="", count=200, win=51, power=3, width=1.5, alpha=0.5, num=10, best_max=False):    
     if len(x) != len(y):        
         print(f"Plot warning: {len(x)} != {len(y)}")
         x, y = x[:min(len(x),len(y))], y[:min(len(x),len(y))]
@@ -179,22 +180,11 @@ def plot_smooth_line(ax=None, x=[],y=[], color="black", label="", count=200, ker
     else:
         if alpha > 0:
             ax.plot(x, y, color, linewidth=lw, alpha=alpha)
-        pool = nn.AvgPool1d(kern, stride=stride, padding=kern // 2, count_include_pad=False)
-        avg_y = pool(torch.Tensor(y).view(1,-1)).flatten().numpy()
-        avg_x = pool(torch.Tensor(x).view(1,-1)).flatten().numpy()
-        
-        """
-        sx, sxx = avg_x[-num:].sum(), (avg_x[-num:]*avg_x[-num:]).sum()
-        sy, sxy = avg_y[-num:].sum(), (avg_x[-num:]*avg_y[-num:]).sum()
-        d = num*sxx - sx*sx
-        if d > 0:
-            b = (num*sxy - sx*sy) / d                                 # экстраполируем вперёд
-            a = (sy - b*sx) / num                                     # даже при stride=1 график отстаёт                  
-            avg_x = np.append(avg_x, [ x[-1] ])                       # из-за усреднения x            
-            avg_y = np.append(avg_y, [a + b*x[-1]])
-        """     
-        ax.plot(avg_x, avg_y, color, linewidth=width, label=label)    
-        
+
+        avg_y = savgol_filter(y, win, power)
+        ax.plot(x, avg_y, color, linewidth=width, label=label)    
+        i = np.argmax(avg_y) if best_max else np.argmin(avg_y)
+        ax.scatter(x[i], avg_y[i], facecolors='none', edgecolors=color)
 
 
 #===============================================================================

@@ -44,3 +44,49 @@ def get_activation(activation, inplace=True):
         assert isinstance(activation, nn.Module)
         return activation
 
+
+
+#===============================================================================
+
+class BaseModel(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+
+        self.beta = 0.9
+        self.datas = []
+        self.grads = []
+
+    #---------------------------------------------------------------------------
+
+    def update(self, in_modules=[]):
+        """
+        Вызывается тренереном перед обнулением градиентов, если модуль добавлен fit(states=[])
+        in_modules = [ nn.Linear, nn.Conv2d]
+        """
+        i = 0
+        for layer in self.mlp:
+            if len(in_modules)==0 or type(layer) in in_modules:
+                if layer.weight.grad is None:
+                    g = 0                    
+                else:
+                    g = layer.weight.grad.square().mean().sqrt()
+                if len(self.grads) == i:
+                    self.grads.append(g)                    
+                else:
+                    self.grads[i] = self.cfg.beta * self.grads[i]  + (1-self.cfg.beta) * g
+
+                d = layer.weight.detach().square().mean().sqrt()
+                if len(self.datas) == i:                    
+                    self.datas.append(d)                    
+                else:
+                    self.datas[i] = self.beta * self.datas[i]  + (1-self.beta) * d
+
+                i += 1
+
+    #---------------------------------------------------------------------------                
+
+    def plot(self ):
+        """
+        Вызывается тренереном при построении графиков модели, если модуль добавлен fit(states=[])        
+        """
+        pass
