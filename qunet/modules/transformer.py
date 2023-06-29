@@ -1,4 +1,5 @@
 ﻿import math, copy
+import numpy as np, matplotlib.pyplot as plt
 import torch, torch.nn as nn
 
 from ..config  import Config
@@ -6,7 +7,87 @@ from .mlp      import MLP
 
 #===============================================================================
 
-class SelfAttention(nn.Module):
+class Residual(nn.Module):
+    """
+    Residual block
+
+    Классический highway: w=sigmoid(linear(x)); x*w + (1-w)*mlp, ...
+    не работал для нейтрино. Возможно это негативный эффект постоянного
+    умножения x (и потом градиента) на число меньшее 1:  x*0.5*0.5*...
+    Не работал также linear(x) + mlp, с начальной единичной матрицей :(
+
+    Карпатов сделал ln на входе, хотя многие рисуют на выходе.
+    Это сказывается тоько на первом и последнем блоке.
+    Наверное как у Карпатова правильнее (нормируем перед вычислениями).
+    """
+    def __init__(self, module, dim, res = 1, skip=1.):
+        super().__init__()
+        self.module  = module
+        if   res == 3:                # training multiplier for each components
+            self.gamma = nn.Parameter( torch.zeros( dim ) )
+        elif res == 2:                # training common multiplier
+            self.gamma = nn.Parameter( torch.zeros(1) )     # 0 ??? Julius Ruseckas
+        else:                         # constant multiplayer
+            self.register_buffer("gamma", torch.tensor(1.) )
+
+        self.register_buffer("skip", torch.tensor(float(skip)) )
+
+        self.norm  = nn.LayerNorm (dim)
+
+        self.debug  = False         # see forward
+        self.beta   = 0.9           # value of smoothing
+        self.sqr_x  = None          # average of square value of block input
+        self.sqr_dx = None
+        self.std    = torch.tensor(float(0))
+
+        self.gamma_d   = None       # average for gamma data and gard
+        self.gamma_g   = None       # (see update)
+
+    #---------------------------------------------------------------------------
+
+    def update(self):
+        """ Call trainer before optim.zero_grad() """
+        self.module.update()
+
+        if self.gamma.requires_grad and self.grad is not None:
+            d = self.gamma.detach().square().mean()
+            g = self.gamma.gard    .square().mean()
+
+            b, b1 = self.beta, 1-self.beta
+            if self.gamma_d is None: self.gamma_d = d
+            else:                    self.gamma_d = b * self.gamma_d + b1 * d
+            if self.grad is None:    self.gamma_g = g
+            else:                    self.gamma_g = b * self.gamma_g + b1 * g
+
+    #---------------------------------------------------------------------------
+
+    def forward(self, x):                 # (B,T,E)
+        if self.debug:
+            dx = self.gamma * self.module( self.norm(x) )
+            x  = self.skip  * x
+
+            v_x  = x. detach().square().sum(-1).mean()
+            v_dx = dx.detach().square().sum(-1).mean()
+
+            b, b1 = self.beta, 1-self.beta
+            if self.sqr_x  is None: self.sqr_x  = v_x
+            else:                   self.sqr_x  = b * self.sqr_x  + b1 * v_x
+            if self.sqr_dx is None: self.sqr_dx = v_dx
+            else:                   self.sqr_dx = b * self.sqr_dx + b1 * v_dx
+
+            if self.std > 0:
+                return x + dx * (1+torch.randn((x.size(0),x.size(1),1), device=x.device)*self.std)
+            else:
+                return x + dx
+        else:
+            if self.std > 0:
+                return self.skip * x + self.gamma * self.module( self.norm(x) ) * (1+torch.randn((x.size(0),x.size(1),1), device=x.device)*self.std)
+            else:
+                return self.skip * x + self.gamma * self.module( self.norm(x) )
+
+#===============================================================================
+
+class Attention(nn.Module):
     """
     Self Attention: (B,T,E) -> (B,T,E)
     base on: https://github.com/karpathy/nanoGPT/blob/master/model.py
@@ -24,7 +105,9 @@ class SelfAttention(nn.Module):
             drop (float=0.0):
                 dropout probability
             res (int=1):
-                kind of skip-connections (for TransformerBlock): (0) f(x) - none; (1) x+f(x), (2)  x*w+f(x) training one for all E; (3) training for each E
+                kind of skip-connections (for TransformerBlock): (1) x+f(x), (2)  x+w*f(x) - w training one for all E; (3) w training for each E
+            skip (float = 1.):
+                # fixed multiplier for skip loop:  skip*x + w*f(x) - can be turned off
             causal (bool=False):
                 kind of causal attention mask (True: GPT, False: BERT)
             T_max (int=2048):
@@ -34,15 +117,19 @@ class SelfAttention(nn.Module):
         ------------
         ```
         B, T, E, H = 1, 10, 128, 16
-        att = SelfAttention(E=E, H=H)
+        att = Attention(E=E, H=H)
         x = torch.rand(B,T,E)         # batch, tokens, embedding
         y = att(x)                    # (B,T,E)
         ```
         """
         super().__init__()
-        self.cfg = SelfAttention.default()
+        self.cfg = Attention.default()
         self.cfg.set(*args, **kvargs)
         self.create()
+
+        self.beta = 0.9
+        self.data = None
+        self.grad = None
 
     #---------------------------------------------------------------------------
 
@@ -51,6 +138,7 @@ class SelfAttention(nn.Module):
             E      = None,     # размерность эмбедига
             H      = 1,        # число голов (E % H == 0 !)
             res    = 1,        # kind of skip-connections (in TransformerBlock)
+            skip   = 1,        # множитель для skip петли
             causal = False,    # причинное внимание (как в GPT) иначе как в BERT
             T_max  = 2048,     # максимальное число токенов (нужно для causal==True)
             drop   = 0,        # dropout на выходе внимания
@@ -106,25 +194,41 @@ class SelfAttention(nn.Module):
 
     #---------------------------------------------------------------------------
 
+    def update(self):        
+        d = (self.c_attn.weight.data.square().sum(-1).mean() + self.c_proj.weight.data.square().sum(-1).mean()) / 2
+        g = (self.c_attn.weight.grad.square().sum(-1).mean() + self.c_proj.weight.grad.square().sum(-1).mean()) / 2            
+
+        b, b1 = self.beta, 1-self.beta
+        if self.data is None: self.data = d
+        else:                 self.data = b * self.data + b1 * d
+        if self.grad is None: self.grad = g
+        else:                 self.grad = b * self.grad + b1 * g
+        
+    #---------------------------------------------------------------------------
+
+    def decay(self):
+        return set(self.c_attn.weight, self.c_proj.weight)
+    #---------------------------------------------------------------------------
+
     def unit_test():
         B, T, E, H = 1, 10, 128, 16
-        att = SelfAttention(E=E, H=H)
+        att = Attention(E=E, H=H)
         x = torch.rand(B,T,E)
         y = att(x)
         r1 = x.shape == y.shape
         if not r1:
-            print(f"!! SelfAttention: x.shape={x.shape} != y.shape={y.shape}")
+            print(f"!! Attention: x.shape={x.shape} != y.shape={y.shape}")
 
-        cfg = SelfAttention.default()(E=E)
-        att = SelfAttention(cfg)
+        cfg = Attention.default()(E=E)
+        att = Attention(cfg)
         y = att(x)
         r2 = x.shape == y.shape
         if not r2:
-            print(f"!! SelfAttention: x.shape={x.shape} != y.shape={y.shape}")
+            print(f"!! Attention: x.shape={x.shape} != y.shape={y.shape}")
 
         res = r1 and r2
         if res:
-            print("ok SelfAttention")
+            print("ok Attention")
         return res
 
 #===============================================================================
@@ -139,11 +243,13 @@ class FFT(nn.Module):
 
         Args:
         ------------
-            drop (float = 0.0)
+            drop (float = 0.0):
                 dropout after fft
             res (int = 1):
-                kind of skip-connections (for TransformerBlock): (0) f(x) - none; (1) x+f(x), (2)  x*w+f(x) training one for all E; (3) training for each E
-            after (int = 1)
+                kind of skip-connections (for TransformerBlock): (1) x+f(x), (2) x+w*f(x) - w training one for all E; (3) w- training for each E
+            skip (float = 1.):
+                # fixed multiplier for skip loop:  skip*x + w*f(x) - can be turned off
+            after (int = 1):
                 after fft2: (1) take Re, (2) take Im, (3) Re**2+Im**2
 
         Example
@@ -160,11 +266,15 @@ class FFT(nn.Module):
         self.cfg.set(*args, **kvargs)
         self.create()
 
+        self.data = torch.tensor(float(0))
+        self.grad = torch.tensor(float(0))
+
     #---------------------------------------------------------------------------
 
     def default():
         return copy.deepcopy(Config(
             res   = 1,         # kind of skip-connections (in TransformerBlock)
+            skip  = 1.,        # fixed multiplier for skip loop
             drop  = 0,         # dropout на выходе внимания
             after = 1,         # после fft2: 1 - брать Re, 2 брать Im, 3 Re**2+Im**2
         ))
@@ -188,6 +298,16 @@ class FFT(nn.Module):
 
         x = self.drop(x)
         return x                               # (B,T,E)
+
+    #---------------------------------------------------------------------------
+
+    def update(self):
+        pass
+
+    #---------------------------------------------------------------------------
+
+    def decay(self):
+        return set()
 
     #---------------------------------------------------------------------------
 
@@ -243,22 +363,16 @@ class  TransformerBlock(nn.Module):
 
         # мы можем одним аргументом задать параметры в att и mlp
         if 'E' in kvargs:
-            self.cfg.att.E      = kvargs['E']
-            self.cfg.mlp.input  = kvargs['E']
-            self.cfg.mlp.output = kvargs['E']
+            self.cfg.att.E = self.cfg.mlp.input = self.cfg.mlp.output = kvargs['E']
 
         if 'H' in kvargs:
             self.cfg.att.H = kvargs['H']
 
         if 'res' in kvargs:
-            self.cfg.att.res = kvargs['res']
-            self.cfg.mlp.res = kvargs['res']
-            self.cfg.fft.res = kvargs['res']
+            self.cfg.att.res = self.cfg.mlp.res = self.cfg.fft.res = kvargs['res']
 
         if 'drop' in kvargs:
-            self.cfg.att.drop = kvargs['drop']
-            self.cfg.mlp.drop = kvargs['drop']
-            self.cfg.fft.drop = kvargs['drop']
+            self.cfg.att.drop = self.cfg.mlp.drop = self.cfg.fft.drop = kvargs['drop']
 
         if 'causal' in kvargs:
             self.cfg.att.causal = kvargs['causal']
@@ -282,8 +396,8 @@ class  TransformerBlock(nn.Module):
             is_fft = 0,
             is_att = 1,
             is_mlp = 1,
-            att = SelfAttention.default(),
-            mlp = Config(MLP.default(), stretch=4, res=1),
+            att = Attention.default(),
+            mlp = Config(MLP.default(), stretch=4, res=1, skip=1.0),
             fft = FFT.default(),
         ))
 
@@ -294,72 +408,56 @@ class  TransformerBlock(nn.Module):
         assert cfg.att.E is not None and cfg.att.E > 0 and cfg.att.E == cfg.mlp.input and cfg.mlp.input == cfg.mlp.output,  f"TransformerBlock: embedding needs to be defined: E={cfg.E}, input={cfg.mlp.input}, output={cfg.mlp.output}"
 
         if cfg.is_fft:
-            self.ln_0 = nn.LayerNorm (cfg.att.E)
-            self.fft = FFT(cfg.fft)
-
-            cfg.fft.res = max(0, min(3, cfg.fft.res))
-            if   cfg.fft.res == 3:     # training multiplier for each components
-                self.w_fft = nn.Parameter( torch.ones( cfg.att.E ) )
-            elif cfg.fft.res == 2:     # training common multiplier
-                self.w_fft   = nn.Parameter( torch.ones(1) )
-            else:                      # constant multiplayer   (0 or 1)
-                self.register_buffer("w_fft", torch.tensor(float(cfg.fft.res)))
-
-
+            self.fft = Residual(FFT(cfg.fft),       dim=cfg.att.E, res=cfg.fft.res, skip=cfg.fft.skip)
         if cfg.is_att:
-            self.ln_1 = nn.LayerNorm (cfg.att.E)
-            self.att  = SelfAttention(cfg.att)
-
-            cfg.att.res = max(0, min(3, cfg.att.res))
-            if   cfg.att.res == 3:     # training multiplier for each components
-                self.w_att = nn.Parameter( torch.ones( cfg.att.E ) )
-            elif cfg.att.res == 2:     # training common multiplier
-                self.w_att   = nn.Parameter( torch.ones(1) )
-            else:                      # constant multiplayer (0 or 1)
-                self.register_buffer("w_att", torch.tensor(float(cfg.att.res)))
-
+            self.att = Residual(Attention(cfg.att), dim=cfg.att.E, res=cfg.att.res, skip=cfg.att.skip)
         if cfg.is_mlp:
-            self.ln_2 = nn.LayerNorm(cfg.att.E)
-            self.mlp  = MLP(cfg.mlp)
-
-            cfg.mlp.res = max(0, min(3, cfg.mlp.res))
-            if   cfg.mlp.res == 3:     # training multiplier for each components
-                self.w_mlp = nn.Parameter( torch.ones( cfg.att.E ) )
-            elif cfg.mlp.res == 2:     # training common multiplier
-                self.w_mlp   = nn.Parameter( torch.ones(1) )
-            else:                      # constant multiplayer   (0 or 1)
-                self.register_buffer("w_mlp", torch.tensor(float(cfg.mlp.res)))
+            self.mlp = Residual(MLP(cfg.mlp),       dim=cfg.att.E, res=cfg.mlp.res, skip=cfg.mlp.skip)
 
     #---------------------------------------------------------------------------
 
     def forward(self, x):
         """
         (B,T,E) -> (B,T,E)
-        Классический highway: w=sigmoid(linear(x)); x*w + (1-w)*mlp, ...
-        не работал для нейтрино. Возможно это негативный эффект постоянного
-        умножения x (и потом градиента) на число меньшее 1:  x*0.5*0.5*...
-        Не работал также linear(x) + mlp, с начальной единичной матрицей :(
-
-        Карпатов сделал ln на входе, хотя многие рисуют на выходе.
-        Это сказывается тоько на первом и последнем блоке.
-        Наверное как у Карпатова правильнее (нормируем перед вычислениями).
         """
         if self.cfg.is_fft:
-            x = x * self.w_fft + self.fft( self.ln_0(x) )
+            x = self.fft(x)
 
         if self.cfg.is_att:
-            x = x * self.w_att + self.att( self.ln_1(x) )
+            x = self.att(x)
 
         if self.cfg.is_mlp:
-            x = x * self.w_mlp + self.mlp( self.ln_2(x) )
+            x = self.mlp(x)
 
         return x                                            # (B,T,E)
 
     #---------------------------------------------------------------------------
 
     def update(self):
+        if self.cfg.is_fft:
+            self.fft.update()
+
+        if self.cfg.is_att:
+            self.att.update()
+
         if self.cfg.is_mlp:
             self.mlp.update()
+
+    #---------------------------------------------------------------------------
+
+    def decay(self):
+        res = set()
+        if self.cfg.is_fft:
+            res.update(self.fft.decay() )
+
+        if self.cfg.is_att:
+            res.update(self.att.decay() )
+
+        if self.cfg.is_mlp:
+            res.update(self.mlp.decay() )
+
+        return res
+    
     #---------------------------------------------------------------------------
 
     def unit_test():
@@ -424,32 +522,26 @@ class  Transformer(nn.Module):
 
         # В set не передаём kvargs, чтобы не было ворнингов по E, H и т.д.
         if 'n_blocks' in kvargs:
-            self.cfg.n_blocks    = kvargs['n_blocks']
+            self.cfg.n_blocks = kvargs['n_blocks']
         if 'is_fft' in kvargs:
-            self.cfg.is_fft      = kvargs['is_fft']
+            self.cfg.is_fft   = kvargs['is_fft']
         if 'is_att' in kvargs:
-            self.cfg.is_att      = kvargs['is_att']
+            self.cfg.is_att   = kvargs['is_att']
         if 'is_mlp' in kvargs:
-            self.cfg.is_mlp      = kvargs['is_mlp']
+            self.cfg.is_mlp   = kvargs['is_mlp']
 
         # одним аргументом задаём параметры в fft, att и mlp всех блоков
         if 'E' in kvargs:
-            self.cfg.block.att.E      = kvargs['E']
-            self.cfg.block.mlp.input  = kvargs['E']
-            self.cfg.block.mlp.output = kvargs['E']
+            self.cfg.block.att.E = self.cfg.block.mlp.input = self.cfg.block.mlp.output = kvargs['E']
 
         if 'H' in kvargs:
             self.cfg.block.att.H = kvargs['H']
 
         if 'res' in kvargs:
-            self.cfg.block.fft.res = kvargs['res']
-            self.cfg.block.att.res = kvargs['res']
-            self.cfg.block.mlp.res = kvargs['res']
+            self.cfg.block.fft.res = self.cfg.block.att.res = self.cfg.block.mlp.res = kvargs['res']
 
         if 'drop' in kvargs:
-            self.cfg.block.fft.drop = kvargs['drop']
-            self.cfg.block.att.drop = kvargs['drop']
-            self.cfg.block.mlp.drop = kvargs['drop']
+            self.cfg.block.fft.drop = self.cfg.block.att.drop = self.cfg.block.mlp.drop = kvargs['drop']
 
         if 'after' in kvargs:
             self.cfg.block.fft.after = kvargs['after']
@@ -501,20 +593,41 @@ class  Transformer(nn.Module):
 
     def update(self):
         for block in self.blocks:
-            block.update() 
+            block.update()
 
     #---------------------------------------------------------------------------
 
-    def plot(self):
-        pass
+    def decay(self):
+        res = set()
+        for block in self.blocks:
+            res.update(block.decay() )    
+        return res        
+
+    #---------------------------------------------------------------------------
+
+    def plot(self, w=12, h=3, eps=1e-8):
+        idx = np.arange(len(self.blocks))
+
+        fig, ax = plt.subplots(1,1, figsize=(w, h))
+        
+        plt.text(0,0,f" mult\n std\n", ha='left', transform = ax.transAxes, fontsize=8)
+        
+        ax.grid(ls=":")
+        ax.set_xticks(idx)
+
+        ax.bar(idx, idx*2)
+        ax.bar(idx, idx*3, bottom = idx*2)
+
+        plt.show()
 
     #---------------------------------------------------------------------------
 
     def unit_test():
         B, T, E, H = 1, 10, 128, 16
-        m = Transformer(E=E, H=H, n_blocks=3, is_fft=[1,1,0], is_att=[0,0,1])
+        m = Transformer(E=E, H=H, n_blocks=5, is_fft=[1,1,0,0,0], is_att=[0,0,1,1,1])
         x = torch.rand(B,T,E)  # (B,T,E) = (batch, token, embedding)
         y = m(x)               # (B,T,E) -> (B,T,E)
+        m.plot()
 
         #for block in m.blocks: print(block.cfg)
 
@@ -522,7 +635,7 @@ class  Transformer(nn.Module):
         if not res:
             print(f"!! Transformer: x.shape={x.shape} != y.shape={y.shape}")
         else:
-            print("ok Transformer")
+            print(f"ok Transformer: {tuple(x.shape)} -> {tuple(y.shape)}")
         return res
 
 #===============================================================================

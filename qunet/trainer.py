@@ -81,12 +81,12 @@ class Trainer:
         )
 
         self.folders = Config(
-            loss   = None,              # folder to save the best val loss models
-            score  = None,              # folder to save the best val score models
-            loss_ema = None,            # folder to save the best val loss EMA models
-            score_ema = None,           # folder to save the best val score EMA models
-            point  = None,              # folder to save checkpoints
-            prefix = "",                # add prefix to file name
+            loss   =    "loss",         # folder to save the best val loss models
+            score  =    "score",        # folder to save the best val score models
+            loss_ema =  "loss_ema",     # folder to save the best val loss EMA models
+            score_ema = "score_ema",    # folder to save the best val score EMA models
+            point  =    "point",        # folder to save checkpoints
+            prefix =    "",             # add prefix to file name
         )
 
         # -------------------------------- настройки для построения графиков ошибок и метрик

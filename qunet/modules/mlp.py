@@ -66,7 +66,8 @@ class MLP(nn.Module):
         self.datas_b = []  # усреднённые значения длин смещений bias
         self.grads_w = []  # усреднённые значения длин градиентов весов    weight
         self.grads_b = []  # усреднённые значения длин градиентов смещений bias
-
+        self.data = torch.tensor(float(0))
+        self.grad = torch.tensor(float(0))
     #---------------------------------------------------------------------------
 
     @staticmethod
@@ -131,13 +132,13 @@ class MLP(nn.Module):
         i = 0
         for layer in self.layers:
             if type(layer) == nn.Linear:
-                w = layer.weight.detach().square().mean().sqrt()
+                w = layer.weight.detach().square().mean()
                 if len(self.datas_w) == i: self.datas_w.append(w)                    
                 else:
                     self.datas_w[i] = self.beta * self.datas_w[i]  + (1-self.beta) * w
 
                 if layer.weight.grad is None: g = 0                    
-                else:                         g = layer.weight.grad.square().mean().sqrt()
+                else:                         g = layer.weight.grad.square().mean()
                 if len(self.grads_w) == i: self.grads_w.append(g)                    
                 else:
                     self.grads_w[i] = self.beta * self.grads_w[i]  + (1-self.beta) * g
@@ -147,7 +148,7 @@ class MLP(nn.Module):
                     b = layer.bias.detach().square().mean().sqrt()
 
                     if layer.bias.grad is None: g = 0                    
-                    else:                       g = layer.bias.grad.square().mean().sqrt()                    
+                    else:                       g = layer.bias.grad.square().mean()
 
 
                 if len(self.datas_b) == i:  self.datas_b.append(b)                    
@@ -159,14 +160,29 @@ class MLP(nn.Module):
                     self.grads_b[i] = self.beta * self.grads_b[i]  + (1-self.beta) * g
     
                 i += 1
-        
+        if self.datas_w:
+            self.data = sum(self.datas_w) / len(self.datas_w)
+        if self.grads_w:
+            self.grad = sum(self.grads_w) / len(self.grads_w)
+
+    #---------------------------------------------------------------------------
+
+    def decay(self):
+        """        
+        """        
+        res = set()
+        for layer in self.layers:
+            if type(layer) == nn.Linear:
+                res.add(layer.weight)
+        return res
     #---------------------------------------------------------------------------
 
     def plot(self, w=12, h=3, eps=1e-8):
         fig, ax = plt.subplots(1,1, figsize=(w, h))        
         x = np.arange(len(self.datas_w))
         if self.datas_w:           
-            ax.plot(x, np.array(self.datas_w).transpose(),  "-b.", lw=2,  label="weight")
+            y = [[ d.sqrt().cpu().item() for d in datas] for datas in self.datas_w]
+            ax.plot(x, np.array(y).transpose(),  "-b.", lw=2,  label="weight")
             ax.set_ylim(bottom=0)   # after plot !!!            
             ax.set_ylabel("weight", color='b')
             ax.tick_params(axis='y', colors='b')
@@ -174,8 +190,9 @@ class MLP(nn.Module):
             ax.grid(ls=":")
 
         if self.datas_b:           
-            ax1 = ax.twinx()            
-            ax1.plot(x, np.array(self.datas_b).transpose(), "-g.", label="bias")
+            ax1 = ax.twinx()    
+            y = [[ d.sqrt().cpu().item() for d in datas] for datas in self.datas_b]        
+            ax1.plot(x, np.array(y).transpose(), "-g.", label="bias")
             ax1.spines["left"].set_position(("outward", 40))
             ax1.spines["left"].set_visible(True)
             ax1.yaxis.set_label_position('left')
@@ -184,15 +201,17 @@ class MLP(nn.Module):
             ax1.tick_params(axis='y', colors='g')
 
         if self.grads_w:
-            ax2 = ax.twinx()            
-            ax2.plot(x, np.array(self.grads_w).transpose(), "--b.", mfc='r', mec='r', label="grad")
+            ax2 = ax.twinx()      
+            y = [[ d.sqrt().cpu().item() for d in datas] for datas in self.grads_w]      
+            ax2.plot(x, np.array(y).transpose(), "--b.", mfc='r', mec='r', label="grad")
             ax2.set_ylim(bottom=0)   # after plot !!!
             ax2.set_ylabel("--- grad weight",  color='r')
             ax2.tick_params(axis='y', colors='r')
 
         if self.grads_b:
-            ax3 = ax.twinx()            
-            ax3.plot(x, np.array(self.grads_b).transpose(), "--g.", mfc='r', mec='r', label="grad")
+            ax3 = ax.twinx()      
+            y = [[ d.sqrt().cpu().item() for d in datas] for datas in self.grads_b]      
+            ax3.plot(x, np.array(y).transpose(), "--g.", mfc='r', mec='r', label="grad")
             ax3.spines["right"].set_position(("outward", 50))
             ax3.set_ylabel("--- grad bias", color='r')
             ax3.tick_params(axis='y', colors='r')
