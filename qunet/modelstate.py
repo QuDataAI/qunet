@@ -487,9 +487,9 @@ class ModelState:
             ax1.tick_params(axis='y', colors='b')
 
         if grad:
-            ax2 = ax.twinx()            
-            ax2.plot(x, grad, "-r.", label="grad")
-            ax2.set_ylim(bottom=0)   # after plot !!!
+            ax2 = ax.twinx()           
+            ax2.set_yscale('log') 
+            ax2.plot(x, grad, "-r.", label="grad")            
             ax2.set_ylabel("grad",  color='r')
             ax2.tick_params(axis='y', colors='r')
 

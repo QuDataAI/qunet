@@ -26,16 +26,14 @@ print("--------------------------")
 print("unit tests result = ", res)
 print("--------------------------")
 
+cfg = Config(E=64, H=4, n_blocks=1, is_fft=1, is_att=1, res=2, gamma=0.2)
+model = Transformer(cfg)
+state = ModelState(model)
+
+model.debug()
+y = model(torch.randn(1,10,64))
+(y*y).mean().backward()
+model.update()
 
 
-"""
-import torch, torch.nn as nn, torch.nn.functional as F
-
-
-weights = torch.tensor([5, 10, 3, 5], dtype=torch.float) 
-choice  = torch.multinomial(weights, 1)
-
-print( choice )
-
-print(globals().keys())
-"""
+state.params()

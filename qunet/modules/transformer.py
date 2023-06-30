@@ -20,13 +20,13 @@ class Residual(nn.Module):
     Это сказывается тоько на первом и последнем блоке.
     Наверное как у Карпатова правильнее (нормируем перед вычислениями).
     """
-    def __init__(self, module, dim, res = 1, skip=1.):
+    def __init__(self, module, dim, res = 1, skip=1., gamma=0.1):
         super().__init__()
         self.module  = module
         if   res == 3:                # training multiplier for each components
-            self.gamma = nn.Parameter( torch.zeros( dim ) )
+            self.gamma = nn.Parameter( torch.empty( dim ).fill_(float(gamma)) )
         elif res == 2:                # training common multiplier
-            self.gamma = nn.Parameter( torch.zeros(1) )     # 0 ??? Julius Ruseckas
+            self.gamma = nn.Parameter( torch.tensor(float(gamma)) )     # 0 ??? Julius Ruseckas
         else:                         # constant multiplayer
             self.register_buffer("gamma", torch.tensor(1.) )
 
@@ -40,7 +40,7 @@ class Residual(nn.Module):
         self.sqr_dx = None
         self.std    = torch.tensor(float(0))
 
-        self.gamma_d   = None       # average for gamma data and gard
+        self.gamma_d   = None       # average for gamma data and grad
         self.gamma_g   = None       # (see update)
 
     #---------------------------------------------------------------------------
@@ -49,14 +49,14 @@ class Residual(nn.Module):
         """ Call trainer before optim.zero_grad() """
         self.module.update()
 
-        if self.gamma.requires_grad and self.grad is not None:
-            d = self.gamma.detach().square().mean()
-            g = self.gamma.gard    .square().mean()
+        b, b1 = self.beta, 1-self.beta
+        d = self.gamma.detach().square().mean()
+        if self.gamma_d is None: self.gamma_d = d
+        else:                    self.gamma_d = b * self.gamma_d + b1 * d
 
-            b, b1 = self.beta, 1-self.beta
-            if self.gamma_d is None: self.gamma_d = d
-            else:                    self.gamma_d = b * self.gamma_d + b1 * d
-            if self.grad is None:    self.gamma_g = g
+        if self.gamma.requires_grad and self.gamma.grad is not None:
+            g = self.gamma.grad.square().mean()
+            if self.gamma_g is None: self.gamma_g = g
             else:                    self.gamma_g = b * self.gamma_g + b1 * g
 
     #---------------------------------------------------------------------------
@@ -347,6 +347,8 @@ class  TransformerBlock(nn.Module):
                 kind of causal attention mask (True: GPT, False: BERT)
             T_max (int=2048):
                 maximum number of tokens (needed for causal==True)
+            gamma (float = 0.1):
+                initial value of the learning residual multiplier
 
         Example
         ------------
@@ -396,6 +398,7 @@ class  TransformerBlock(nn.Module):
             is_fft = 0,
             is_att = 1,
             is_mlp = 1,
+            gamma  = 0.1,
             att = Attention.default(),
             mlp = Config(MLP.default(), stretch=4, res=1, skip=1.0),
             fft = FFT.default(),
@@ -407,12 +410,14 @@ class  TransformerBlock(nn.Module):
         cfg = self.cfg
         assert cfg.att.E is not None and cfg.att.E > 0 and cfg.att.E == cfg.mlp.input and cfg.mlp.input == cfg.mlp.output,  f"TransformerBlock: embedding needs to be defined: E={cfg.E}, input={cfg.mlp.input}, output={cfg.mlp.output}"
 
+        self.fft = self.att = self.mlp = None
+
         if cfg.is_fft:
-            self.fft = Residual(FFT(cfg.fft),       dim=cfg.att.E, res=cfg.fft.res, skip=cfg.fft.skip)
+            self.fft = Residual(FFT(cfg.fft),       dim=cfg.att.E, res=cfg.fft.res, skip=cfg.fft.skip, gamma=cfg.gamma)
         if cfg.is_att:
-            self.att = Residual(Attention(cfg.att), dim=cfg.att.E, res=cfg.att.res, skip=cfg.att.skip)
+            self.att = Residual(Attention(cfg.att), dim=cfg.att.E, res=cfg.att.res, skip=cfg.att.skip, gamma=cfg.gamma)
         if cfg.is_mlp:
-            self.mlp = Residual(MLP(cfg.mlp),       dim=cfg.att.E, res=cfg.mlp.res, skip=cfg.mlp.skip)
+            self.mlp = Residual(MLP(cfg.mlp),       dim=cfg.att.E, res=cfg.mlp.res, skip=cfg.mlp.skip, gamma=cfg.gamma)
 
     #---------------------------------------------------------------------------
 
@@ -457,7 +462,25 @@ class  TransformerBlock(nn.Module):
             res.update(self.mlp.decay() )
 
         return res
-    
+
+    #---------------------------------------------------------------------------
+
+    def debug(self, value=True, beta=None):
+        if self.fft is not None:
+            self.fft.debug = value
+            if beta is not None:
+                self.fft.beta = beta
+
+        if self.att is not None:
+            self.att.debug = value
+            if beta is not None:
+                self.att.beta = beta
+
+        if self.mlp is not None:
+            self.mlp.debug = value
+            if beta is not None:
+                self.mlp.beta = beta
+
     #---------------------------------------------------------------------------
 
     def unit_test():
@@ -506,7 +529,8 @@ class  Transformer(nn.Module):
                 there is an attention block, can be a list (for each block)
             is_mlp  (int=1):
                 there is an MLP block, can be a list (for each block)
-
+            gamma (float = 0.1):
+                initial value of the learning residual multiplier
         Example:
         ------------
         ```
@@ -530,27 +554,32 @@ class  Transformer(nn.Module):
         if 'is_mlp' in kvargs:
             self.cfg.is_mlp   = kvargs['is_mlp']
 
+        if 'gamma' in kvargs:
+            self.cfg.block.gamma =  kvargs['gamma']
+        else:
+            self.cfg.block.gamma = self.cfg.gamma
+
         # одним аргументом задаём параметры в fft, att и mlp всех блоков
-        if 'E' in kvargs:
-            self.cfg.block.att.E = self.cfg.block.mlp.input = self.cfg.block.mlp.output = kvargs['E']
+        E = kvargs['E'] if 'E' in kvargs else (self.cfg.E if self.cfg.has('E') else self.cfg.block.att.E)
+        self.cfg.block.att.E = self.cfg.block.mlp.input = self.cfg.block.mlp.output = E
 
-        if 'H' in kvargs:
-            self.cfg.block.att.H = kvargs['H']
+        H = kvargs['H'] if 'H' in kvargs else (self.cfg.H if self.cfg.has('H') else self.cfg.block.att.H)
+        self.cfg.block.att.H = H
 
-        if 'res' in kvargs:
-            self.cfg.block.fft.res = self.cfg.block.att.res = self.cfg.block.mlp.res = kvargs['res']
+        res = kvargs['res'] if 'res' in kvargs else (self.cfg.res if self.cfg.has('res') else self.cfg.block.att.res)
+        self.cfg.block.fft.res = self.cfg.block.att.res = self.cfg.block.mlp.res = res
 
-        if 'drop' in kvargs:
-            self.cfg.block.fft.drop = self.cfg.block.att.drop = self.cfg.block.mlp.drop = kvargs['drop']
+        drop = kvargs['drop'] if 'drop' in kvargs else (self.cfg.drop if self.cfg.has('drop') else self.cfg.block.att.drop)
+        self.cfg.block.fft.drop = self.cfg.block.att.drop = self.cfg.block.mlp.drop = drop
 
-        if 'after' in kvargs:
-            self.cfg.block.fft.after = kvargs['after']
+        causal = kvargs['causal'] if 'causal' in kvargs else (self.cfg.causal if self.cfg.has('causal') else self.cfg.block.att.causal)
+        self.cfg.block.att.causal = causal
 
-        if 'causal' in kvargs:
-            self.cfg.block.att.causal = kvargs['causal']
+        T_max = kvargs['T_max'] if 'T_max' in kvargs else (self.cfg.T_max if self.cfg.has('T_max') else self.cfg.block.att.T_max)
+        self.cfg.block.att.T_max = T_max
 
-        if 'T_max'  in kvargs:
-            self.cfg.block.att.T_max = kvargs['T_max']
+        after = kvargs['after'] if 'after' in kvargs else (self.cfg.after if self.cfg.has('after') else self.cfg.block.fft.after)
+        self.cfg.block.fft.after = after
 
         self.create()
 
@@ -562,6 +591,7 @@ class  Transformer(nn.Module):
             is_fft    = 0,     # there is a FFT (FNet) block, can be a list (for each block)
             is_att    = 1,     # there is an attention block, can be a list (for each block)
             is_mlp    = 1,     # there is an MLP block, can be a list (for each block)
+            gamma     = 0.1,   # initial value of the learning residual multiplier
             block = TransformerBlock.default()
         ))
 
@@ -605,29 +635,84 @@ class  Transformer(nn.Module):
 
     #---------------------------------------------------------------------------
 
-    def plot(self, w=12, h=3, eps=1e-8):
+    def debug(self, value=True, beta=None):
+        for block in self.blocks:
+            block.debug(value, beta)
+
+    #---------------------------------------------------------------------------
+
+    def plot(self, w=12, h=3, eps=1e-8, bar_width = 0.25, info=False):
+        
         idx = np.arange(len(self.blocks))
 
         fig, ax = plt.subplots(1,1, figsize=(w, h))
-        
-        plt.text(0,0,f" mult\n std\n", ha='left', transform = ax.transAxes, fontsize=8)
-        
+
         ax.grid(ls=":")
         ax.set_xticks(idx)
+        ax.set_yscale('log')
+        ax.set_ylabel("dx/x");  ax.set_xlabel("blocks");
 
-        ax.bar(idx, idx*2)
-        ax.bar(idx, idx*3, bottom = idx*2)
+        plt.text(0,0,f" skip\n std\n", ha='left', transform = ax.transAxes, fontsize=6, family="monospace")
+                
+        fft_dv = [ (b.fft.sqr_dx / (b.fft.sqr_x+eps)).sqrt().cpu().item() if b.fft is not None  else 0  for b in self.blocks]
+        att_dv = [ (b.att.sqr_dx / (b.att.sqr_x+eps)).sqrt().cpu().item() if b.att is not None  else 0  for b in self.blocks]
+        mlp_dv = [ (b.mlp.sqr_dx / (b.mlp.sqr_x+eps)).sqrt().cpu().item() if b.mlp is not None  else 0  for b in self.blocks]
+        #ax.set_ylim(ymin=0, ymax=max(np.max(fft), np.max(att), np.max(mlp)*1.1) ) 
+        
+        ax.bar(idx,              fft_dv, width = bar_width, edgecolor ='grey', alpha=0.5)
+        ax.bar(idx +  bar_width, att_dv, width = bar_width, edgecolor ='grey', alpha=0.5)
+        ax.bar(idx +2*bar_width, mlp_dv, width = bar_width, edgecolor ='grey', alpha=0.5)
+
+        ymin, ymax = ax.get_ylim()
+        for i,b in enumerate(self.blocks):
+            if b.fft is not None:
+                plt.text(i,            ymin, f"{b.fft.skip.cpu().item():.1f}\n{b.fft.std.cpu().item():.1f}\nfft", ha='center', fontsize=6, family="monospace")
+            if b.att is not None:
+                plt.text(i+bar_width,  ymin, f"{b.att.skip.cpu().item():.1f}\n{b.att.std.cpu().item():.1f}\natt", ha='center', fontsize=6, family="monospace")
+            if b.mlp is not None:
+                plt.text(i+2*bar_width,ymin, f"{b.mlp.skip.cpu().item():.1f}\n{b.mlp.std.cpu().item():.1f}\nmlp", ha='center', fontsize=6, family="monospace")
+
+        ax2 = ax.twinx()
+        fft_gamma_d = [ (b.fft.gamma_d).sqrt().cpu().item() if b.fft is not None and b.fft.gamma_d is not None else 0  for b in self.blocks]
+        att_gamma_d = [ (b.att.gamma_d).sqrt().cpu().item() if b.att is not None and b.att.gamma_d is not None else 0  for b in self.blocks]
+        mlp_gamma_d = [ (b.mlp.gamma_d).sqrt().cpu().item() if b.mlp is not None and b.mlp.gamma_d is not None else 0  for b in self.blocks]
+        ax2.plot(idx,               fft_gamma_d, marker=".")
+        ax2.plot(idx +   bar_width, att_gamma_d, marker=".")
+        ax2.plot(idx + 2*bar_width, mlp_gamma_d, marker=".")
+        ax2.set_ylabel("gamma")
+
+        ax3 = ax.twinx()
+        ax3.set_yscale('log')
+        fft_gamma_g = [ (b.fft.gamma_g).sqrt().cpu().item() if b.fft is not None and b.fft.gamma_g is not None else 0  for b in self.blocks]
+        att_gamma_g = [ (b.att.gamma_g).sqrt().cpu().item() if b.att is not None and b.att.gamma_g is not None else 0  for b in self.blocks]
+        mlp_gamma_g = [ (b.mlp.gamma_g).sqrt().cpu().item() if b.mlp is not None and b.mlp.gamma_g is not None else 0  for b in self.blocks]
+        ax3.plot(idx,               fft_gamma_g, ":", marker=".")
+        ax3.plot(idx +   bar_width, att_gamma_g, ":", marker=".")
+        ax3.plot(idx + 2*bar_width, mlp_gamma_g, ":", marker=".")        
+        ax3.set_ylabel("gamma grad")
+        ax3.spines["right"].set_position(("outward", 50))
 
         plt.show()
-
+        if info:
+            return {
+                'fft_dv': fft_dv, 'fft_gamma_d': fft_gamma_d, 'fft_gamma_g': fft_gamma_g,
+                'att_dv': att_dv, 'att_gamma_d': att_gamma_d, 'att_gamma_g': att_gamma_g,
+                'mlp_dv': mlp_dv, 'mlp_gamma_d': mlp_gamma_d, 'mlp_gamma_g': mlp_gamma_g,
+            }
+        
     #---------------------------------------------------------------------------
 
     def unit_test():
         B, T, E, H = 1, 10, 128, 16
-        m = Transformer(E=E, H=H, n_blocks=5, is_fft=[1,1,0,0,0], is_att=[0,0,1,1,1])
+        cfg = Config(E=E, H=H, n_blocks=10, is_fft=1, is_att=1, res=2, gamma=0.2)
+        m = Transformer(cfg)
         x = torch.rand(B,T,E)  # (B,T,E) = (batch, token, embedding)
+
+        m.debug(True)        
         y = m(x)               # (B,T,E) -> (B,T,E)
-        m.plot()
+        y.mean().backward()
+        m.update()
+        print( m.plot(info=True) )
 
         #for block in m.blocks: print(block.cfg)
 
@@ -636,6 +721,14 @@ class  Transformer(nn.Module):
             print(f"!! Transformer: x.shape={x.shape} != y.shape={y.shape}")
         else:
             print(f"ok Transformer: {tuple(x.shape)} -> {tuple(y.shape)}")
+
+        """
+        cfg = Config(E=E, H=H, n_blocks=5, is_fft=[1,1,0,0,0], is_att=[0,0,1,1,1])
+        m = Transformer(cfg)
+        x = torch.rand(B,T,E)  # (B,T,E) = (batch, token, embedding)
+        y = m(x)               # (B,T,E) -> (B,T,E)
+        print(f"ok Transformer: {tuple(x.shape)} -> {tuple(y.shape)}")
+        """
         return res
 
 #===============================================================================

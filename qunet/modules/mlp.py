@@ -181,17 +181,18 @@ class MLP(nn.Module):
         fig, ax = plt.subplots(1,1, figsize=(w, h))        
         x = np.arange(len(self.datas_w))
         if self.datas_w:           
-            y = [[ d.sqrt().cpu().item() for d in datas] for datas in self.datas_w]
+            y = [d.sqrt().cpu().item() for d in self.datas_w]
             ax.plot(x, np.array(y).transpose(),  "-b.", lw=2,  label="weight")
             ax.set_ylim(bottom=0)   # after plot !!!            
             ax.set_ylabel("weight", color='b')
+            ax.set_xlabel("layer")
             ax.tick_params(axis='y', colors='b')
             ax.set_xticks(x)
             ax.grid(ls=":")
 
         if self.datas_b:           
             ax1 = ax.twinx()    
-            y = [[ d.sqrt().cpu().item() for d in datas] for datas in self.datas_b]        
+            y = [d.sqrt().cpu().item() for d in self.datas_b]        
             ax1.plot(x, np.array(y).transpose(), "-g.", label="bias")
             ax1.spines["left"].set_position(("outward", 40))
             ax1.spines["left"].set_visible(True)
@@ -202,15 +203,16 @@ class MLP(nn.Module):
 
         if self.grads_w:
             ax2 = ax.twinx()      
-            y = [[ d.sqrt().cpu().item() for d in datas] for datas in self.grads_w]      
-            ax2.plot(x, np.array(y).transpose(), "--b.", mfc='r', mec='r', label="grad")
-            ax2.set_ylim(bottom=0)   # after plot !!!
+            ax2.set_yscale('log') 
+            y = [ d.sqrt().cpu().item() for d in self.grads_w]      
+            ax2.plot(x, np.array(y).transpose(), "--b.", mfc='r', mec='r', label="grad")            
             ax2.set_ylabel("--- grad weight",  color='r')
             ax2.tick_params(axis='y', colors='r')
 
         if self.grads_b:
             ax3 = ax.twinx()      
-            y = [[ d.sqrt().cpu().item() for d in datas] for datas in self.grads_b]      
+            ax3.set_yscale('log') 
+            y = [d.sqrt().cpu().item() for d in self.grads_b]      
             ax3.plot(x, np.array(y).transpose(), "--g.", mfc='r', mec='r', label="grad")
             ax3.spines["right"].set_position(("outward", 50))
             ax3.set_ylabel("--- grad bias", color='r')
