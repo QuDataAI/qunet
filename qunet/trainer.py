@@ -93,7 +93,8 @@ class Trainer:
         self.view = Config(
             w  = 12,                   # plt-plot width
             h  =  5,                   # plt-plot height
-            units = Config(
+
+            units = Config(            # 
                 unit  = 'epoch',       # 'epoch' | 'sample'
                 count = 1e6,           # units for number of samples
                 time  = 's'            # time units: ms, s, m, h
@@ -101,10 +102,11 @@ class Trainer:
 
             x_min = 0,                 # minimum value in samples on the x-axis (if < 0 last x_min samples)
             x_max = None,              # maximum value in samples on the x-axis (if None - last)
+
             smooth = Config(
                 count  = 100,          # if the number of points exceeds count - draw a smooth line
-                win    = 21,
-                power   = 3, 
+                win    = 21,           # averaging window
+                power   = 3,           # polynomial degree
                 width  = 1.5,          # line thickness
                 alpha  = 0.5,          # source data transparency
             ),
@@ -118,9 +120,9 @@ class Trainer:
                 trn_checks = False,    # show the achievement of the minimum training loss (dots)
                 val_checks = True,     # show the achievement of the minimum validation loss (dots)
                 last_checks = 100,     # how many last best points to display (if -1 then all)
-                cfg   =  Config(),
-                exclude = [],
-                fontsize = 8,
+                cfg   =  Config(),     # config to be displayed on the chart
+                exclude = [],          # which config fields should be excluded
+                fontsize = 8,          # font size for config output
             ),
             score = Config(
                 show  = True,          # show score subplot
@@ -132,9 +134,9 @@ class Trainer:
                 trn_checks = False,    # show the achievement of the optimum training score (dots)
                 val_checks = True,     # show the achievement of the optimum validation score (dots)
                 last_checks = 100,     # how many last best points to display (if -1 then all)
-                cfg =  Config(),
-                exclude = [],
-                fontsize = 8,
+                cfg =  Config(),       # config to be displayed on the chart
+                exclude = [],          # which config fields should be excluded
+                fontsize = 8,          # font size for config output
             ),
         )
 
@@ -185,6 +187,14 @@ class Trainer:
 
             params = 0
         )
+
+        self.compare = Config(
+            hist = [],
+            alpha= 0.3,
+            trn  = True,
+            val  = True,
+        )
+
         if model is not None:
             self.hist.params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
@@ -794,7 +804,7 @@ class Trainer:
         """
         view = view or self.view
         hist = hist or self.hist
-        plot_history(hist, view, fname, self.score_max)
+        plot_history(hist, view, fname, self.score_max, compare=self.compare)
 
     #---------------------------------------------------------------------------
 
@@ -976,20 +986,13 @@ class Trainer:
         assert 'config' in state,    f"Apparently this model was not saved by the trainer: no 'config' in state: {list(state.keys())}"
 
         trainer = trainer or Trainer(None, None)
-
-        try:
-            if ClassModel is None:
-                ClassModel = state.get('class')
-            trainer.model = ClassModel(state['config'])            
-        except:
-            print(f"Can not create model class: {state.get('class')}")
+        
+        if ClassModel is None:
+            ClassModel = state.get('class')
+        trainer.model = ClassModel(state['config'])            
             
-
-        if trainer.model is not None:
-            try:
-                trainer.model.load_state_dict(state['model'])
-            except:
-                print("!!!! Trainer.load> can't trainer.model.load_state_dict")
+        if trainer.model is not None:        
+            trainer.model.load_state_dict(state['model'])
 
         if trainer.model is not None:
             if 'optim_state' in state and 'optim' in state:
@@ -1017,7 +1020,7 @@ class Trainer:
 
     #---------------------------------------------------------------------------
 
-    def load_history(fname, verbose=0):
+    def load_hist(fname, verbose=0):
         """
         Load training history from file fname
 
@@ -1031,7 +1034,7 @@ class Trainer:
         class Model(nn.Module):
             ...
 
-        hist = trainer.load_history("cur_model.pt")
+        hist = trainer.load_hist("cur_model.pt")
         trainer.plot(hist)
         """
         try:
@@ -1046,7 +1049,7 @@ class Trainer:
             print(f"Cannot open file: '{fname}'")
             return None
 
-        return state.get('view')
+        return state.get('hist')
     
     #---------------------------------------------------------------------------
 
@@ -1079,6 +1082,8 @@ class Trainer:
             config=cfg,
             #resume="must"
         )
+
+    #---------------------------------------------------------------------------
 
     def update_ema_model(self, monitor):
         """

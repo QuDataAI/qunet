@@ -6,7 +6,7 @@
 Model must be a class (successor of nn.Module) with functions:
 
 * `forward(x)` function takes input `x` and returns output `y`. 
-This function is not used directly by the coach and usually contains the complete logic of the model.
+This function is not used directly by the trainer and usually contains the complete logic of the model.
 * `training_step(batch, batch_id)` - called by the trainer during the training phase. 
 Should return a scalar loss (with computational graph).
 It can also return a dictionary like `{"loss": loss, "score": torch.hstack([accuracy, tnr, tpr])}`, where score is a quality metrics.
@@ -32,3 +32,22 @@ class Model(nn.Module):
         return {'loss':loss, 'score': error}              # if no score, you can return loss
 ```
 
+Если производятся экспериметы с архитектурой модели, в конструкторе следует использовать свойство `cfg`, в котором эти параметры задаются:
+```python
+class Model(nn.Module):
+    def __init__(self, *arg, **kvarg):        
+        super().__init__()       
+
+        self.cfg = Config(
+            par1 = 1,
+            par2 = 2,
+            par3 = 3
+        )
+        cfg = self.cfg(*arg, **kvarg)    # modify parameters via constructor arguments
+
+        # ... create a model
+
+#model = Model(par2=4,  par3=8)   # эксперимент 1
+model  = Model(par2=20, par3=30)  # эксперимент 2
+```
+Это важно при [сохранении модели](save.md), чтобы при загрузке создавалась правильная архитектура

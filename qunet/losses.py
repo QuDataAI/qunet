@@ -146,7 +146,7 @@ class BatchTtripletLoss(nn.Module):
 
         # step 3 - filter out invalid or easy triplets by setting their loss values to 0        
         mask = self.get_triplet_mask(labels)                             # (B,B,B)        
-        triplet_loss *= mask
+        triplet_loss = triplet_loss * mask
         # easy triplets have negative loss values
         triplet_loss = F.relu(triplet_loss)
 
@@ -221,13 +221,13 @@ class BatchTtripletLoss(nn.Module):
         mask = (distance_matrix == 0.0).float()
 
         # use this mask to set indices with a value of 0 to eps
-        distance_matrix += mask * eps
+        distance_matrix = distance_matrix +  mask * eps
 
         # now it is safe to get the square root
         distance_matrix = torch.sqrt(distance_matrix)
 
         # undo the trick for numerical stability
-        distance_matrix *= (1.0 - mask)
+        distance_matrix = distance_matrix * (1.0 - mask)
 
         return distance_matrix    
     

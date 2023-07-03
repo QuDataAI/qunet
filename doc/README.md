@@ -3,9 +3,10 @@
 * [Quick start](intro.md) - a brief introduction to the QuNet library
 * [Create model](model.md) - create model for trainer
 * [Trainer](trainer.md) - train models
-* [Save models](intro.md) - saving and restoring models
+* [Trainer.plot()](trainer_plot.md) - visualization of the training process
+* [Save and load models](save.md)
+* [Using Schedules](schedules.md)
 * [Modules](modules.md) - description of the architectures implemented in the QuNet library
-* [Large models](large.md) - working with the Large Models
 * [Config](config.md) - working with the Config class (model or project parameters)
 
 <hr>

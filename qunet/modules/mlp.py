@@ -175,6 +175,14 @@ class MLP(nn.Module):
             if type(layer) == nn.Linear:
                 res.add(layer.weight)
         return res
+    
+    #---------------------------------------------------------------------------
+
+    def set_drop(self, value):    
+        for layer in self.layers:
+            if type(layer) == nn.Dropout:
+                layer.p = value
+
     #---------------------------------------------------------------------------
 
     def plot(self, w=12, h=3, eps=1e-8):

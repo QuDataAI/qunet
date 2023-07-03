@@ -80,7 +80,7 @@ The trainer is a key object of the QuNet library. It solves the following tasks:
 * Visualization of the learning process, with ample opportunities for its customization.
 * Calculation of optimal breakpoints based on the best local and smoothed metrics.
 * Saving the best models by loss or score, as well as saving checkpoints.
-* Combine different training schedulers
+* Combining different training schedulers
 * For large models, switch to half precision and use the gradient accumulation buffer.
 * Use of multiple callback objects that can be embedded in different parts of the pipeline.
 

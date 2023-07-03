@@ -1,57 +1,22 @@
-# [QuNet](README.md)  
+# [QuNet](README.md) - Trainer
 
 
-## Visualization of the training process
+## Trainer constructor
 
-When `fit` has argument `period_plot > 0`, then every `period_plot` a training plot will be displayed.
-By default it contains score and loss:
+When creating a trainer, the following parameters can be passed to it:
+* `model`    (nn.Module): model for traininig; must have a training_step method
+* `data_trn` (Data or DataLoader): training data
+* `data_val`  (Data or DataLoader): data for validatio; may be missing;
+* `callbacks` (Callback): list of Callback instances to be called on events
+* `score_max` (bool): consider that the metric (the first column of the second tensor returned by the function `metrics` of the model ); should strive to become the maximum (for example, so for accuracy).
+* `wandb_cfg` = Config(
+    - `api_key` (str) WANDB API key
+    - `project_name` (str) WANDB project name
+    - `run_name`(str, optional) WANDB run name
+    - `ema` (bool) enable EMA (Exponential Moving Average) support
+    - `ema_decay` (float) average decay for EMA
+    - `ema_start_epoch` (int) first epoch to average weights (avoid first random values impact)
 
-
-You can customize the appearance of graphs using the following trainer options:
-
-```python
-trainer.view = Config(
-    w  = 12,                   # plt-plot width
-    h  =  5,                   # plt-plot height
-    units = Config(
-        unit  = 'epoch',       # 'epoch' | 'sample'
-        count = 1e6,           # units for number of samples
-        time  = 's'            # time units: ms, s, m, h
-    ),
-
-    x_min = 0,                 # minimum value in samples on the x-axis (if < 0 last x_min samples)
-    x_max = None,              # maximum value in samples on the x-axis (if None - last)
-
-    loss = Config(                                
-        show  = True,          # show loss subplot
-        y_min = None,          # fixing the minimum value on the y-axis
-        y_max = None,          # fixing the maximum value on the y-axis
-        ticks = None,          # how many labels on the y-axis
-        lr    = True,          # show learning rate
-        labels= True,          # show labels (training events)                
-        trn_checks = False,    # show the achievement of the minimum training loss (dots)
-        val_checks = True      # show the achievement of the minimum validation loss (dots)
-    ),            
-    score = Config(                                
-        show  = True,          # show score subplot    
-        y_min = None,          # fixing the minimum value on the y-axis
-        y_max = None,          # fixing the maximum value on the y-axis
-        ticks = None,          # how many labels on the y-axis
-        lr    = True,          # show learning rate                
-        labels = True,         # show labels (training events)
-        trn_checks = False,    # show the achievement of the optimum training score (dots)
-        val_checks = True      # show the achievement of the optimum validation score (dots)
-    ),
-)
-```
-
-You can change one parameter:
-```python
-trainer.view.loss.lr = False   # do not show learning rate on loss plot
-```
-or immediately a group of parameters:
-```python
-trainer.view.units(unit='sample', count=1e3, time='m')
-```
 
 <hr>
+

@@ -663,7 +663,9 @@ class ResCNN(nn.Module):
                         skip  = [2, 1, 2] )
         x = torch.rand(B,C,H,W)
         y = cnn(x)
-        
+        y.square().mean().backward()
+        cnn.update()        
+        cnn.plot()
 
         r1 = y.shape[1:] == cnn.cfg.output
         if not r1:
