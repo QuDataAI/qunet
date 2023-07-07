@@ -307,6 +307,7 @@ class  TransformerBlock(nn.Module):
             is_mlp = 1,            
 
             res    = 2,
+            norm   = 2,
             skip   = 1.0,
             gamma  = 0.0,
             drop   = 0.0,               # dropout probability after block
@@ -324,11 +325,11 @@ class  TransformerBlock(nn.Module):
 
         layers = []
         if cfg.is_fft:
-            layers.append( Residual(FFT(cfg.fft),       E=cfg.att.E, res=cfg.res, skip=cfg.skip, gamma=cfg.gamma, drop=cfg.drop, name="fft") )
+            layers.append( Residual(FFT(cfg.fft),       E=cfg.att.E, res=cfg.res, skip=cfg.skip, gamma=cfg.gamma, drop=cfg.drop, norm_before=cfg.norm, name="fft") )
         if cfg.is_att:
-            layers.append( Residual(Attention(cfg.att), E=cfg.att.E, res=cfg.res, skip=cfg.skip, gamma=cfg.gamma, drop=cfg.drop, name="att") )
+            layers.append( Residual(Attention(cfg.att), E=cfg.att.E, res=cfg.res, skip=cfg.skip, gamma=cfg.gamma, drop=cfg.drop, norm_before=cfg.norm, name="att") )
         if cfg.is_mlp:
-            layers.append( Residual(MLP(cfg.mlp),       E=cfg.att.E, res=cfg.res, skip=cfg.skip, gamma=cfg.gamma, drop=cfg.drop, name="mlp") )
+            layers.append( Residual(MLP(cfg.mlp),       E=cfg.att.E, res=cfg.res, skip=cfg.skip, gamma=cfg.gamma, drop=cfg.drop, norm_before=cfg.norm, name="mlp") )
     
         self.layers = nn.Sequential( *layers )
 

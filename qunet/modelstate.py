@@ -219,7 +219,8 @@ class ModelState:
                     elif layer in ["Conv1d","Conv2d","Conv3d"]: descr += f"({mo.in_channels}->{mo.out_channels})"
                     elif layer in ["MaxPool1d", "MaxPool2d", "MaxPool3d"]: descr += f"({mo.kernel_size})"
                     elif layer == 'Embedding': descr += f"({mo.num_embeddings},{mo.embedding_dim})"
-                    elif layer in ['RNN','GRU','LSTM']: descr += f"({mo.input_size},{mo.hidden_size})"
+                    elif layer in ['RNN','GRU','LSTM']: descr += f"({mo.input_size},{mo.hidden_size})"    
+                    elif layer in ["AdaptiveAvgPool1d", "AdaptiveAvgPool2d"]: descr += f"({mo.output_size})"
                 elif info > 1:
                     if   layer == "Linear": descr += f"({mo.in_features}->{mo.out_features}, {'T' if mo.bias is not None else 'F'})"
                     elif layer in ["Dropout", "Dropout2d", "Dropout3d"]:   descr += f"({mo.p})"
@@ -229,6 +230,7 @@ class ModelState:
                     elif layer == "LayerNorm": descr += f"({mo.normalized_shape})"
                     elif layer == 'Embedding': descr += f"({mo.num_embeddings},{mo.embedding_dim})"
                     elif layer in ['RNN','GRU','LSTM']: descr += f"({mo.input_size},{mo.hidden_size}, l:{mo.num_layers}, bi:{'T' if mo.bidirectional else 'F'})"
+                    elif layer in ["AdaptiveAvgPool1d", "AdaptiveAvgPool2d"]: descr += f"({mo.output_size})"
 
                 skip = f"│{' '*max(0,3*depth-1)}{'├─ ' if i+1 < count else '└─ '}" if depth > 0 else "├─ "
                 lr['st'] = f"{skip}{descr}"
@@ -266,6 +268,9 @@ class ModelState:
         ma = max( [ len(ln['st']) for ln in self.__layers ] )
         print(self.model.__class__.__name__ + " "*(ma-len(self.model.__class__.__name__))+"      params           data")
         for ln in self.__layers:
+            if ln['module'].__class__.__name__ == "Identity":
+                continue
+
             shapes = ""
             if input_size is not None or  input_data is not None:
                 shapes  = ln['input']  +' '*(inp_w-len(ln['input'])) + ' -> '
@@ -463,7 +468,7 @@ class ModelState:
         if len(data) <= 5:
             x = names
         else:
-            x = np.arange(len(data))
+            x = np.arange(len(data))            
 
         fig, ax = plt.subplots(1,1, figsize=(w, h))
         n1, n2 = self.num_params(), self.num_params(True)

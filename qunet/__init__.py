@@ -17,5 +17,6 @@ from .modules.vit         import *
 
 from .optim.scheduler     import *
 from .optim.adams         import Adams
+from .optim.lion         import Lion
 
 

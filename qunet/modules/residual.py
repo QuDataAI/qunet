@@ -3,73 +3,121 @@ import numpy as np, matplotlib.pyplot as plt
 import torch, torch.nn as nn
 
 from ..config  import Config
+from .total    import get_activation, get_norm, LayerNormChannels
 
 #===============================================================================
 
-class LayerNormChannels(nn.Module):
-    def __init__(self, channels):
-        super().__init__()
-        self.norm = nn.LayerNorm(channels)
-    
-    def forward(self, x):           # (B,C,H,W)
-        x = x.transpose(1, -1)      # (B,W,H,C)
-        x = self.norm(x)         
-        x = x.transpose(-1, 1)      # (B,C,H,W)
-        return x
-    
+class ResidualAlign(nn.Sequential):
+    """
+    Выравниваем вход и выход блока, если из размерности отличаются
+    """
+    def __init__(self, Ein, Eout, stride, norm, dim):
+
+        if dim==1: layers = [ nn.Linear(Ein, Eout) ]
+        else:      layers = [ nn.Conv2d(Ein, Eout, kernel_size=1, stride=stride, bias=False) ]
+
+        norm = get_norm(Eout, norm,  dim)
+        if type(norm) != nn.Identity:
+            layers.append( norm )        
+        super().__init__(*layers)
+
+#===============================================================================
+
+class ResidualAfter(nn.Sequential):
+    """
+    Нормализация и активация после суммирования skip-connection и блок
+    """
+    def __init__(self, E, norm, dim, fun):
+        layers = []
+        norm = get_norm(E, norm,  dim)
+        if type(norm) != nn.Identity:
+            layers.append( norm )     
+
+        if fun:
+            layers.append(get_activation(fun))
+
+        super().__init__(*layers)
+
 #===============================================================================
 
 class Residual(nn.Module):
-    """
-    Residual block
+    """Residual block:
+    ```
+      ┌─────────────── align(x) ───────────────┐
+      │                                        │
+      │                                        │
+    ──┴─╳── norm(x) ── block(x) ── * ── * ──── + ── norm(x) ── fun(x) ── drop(x) ──
+        │                          │    │
+      with p drop block        gamma    1+std*randn()   may be missing
 
-    Классический highway: w=sigmoid(linear(x)); x*w + (1-w)*mlp, ...
-    не работал для нейтрино. Возможно это негативный эффект постоянного
-    умножения x (и потом градиента) на число меньшее 1:  x*0.5*0.5*...
-    Не работал также linear(x) + mlp, с начальной единичной матрицей :(
+    if dim==1: x.shape=(B,T,E)    for transformer, 1d vit
+    if dim==2: x.shape=(B,E,H,W)  for 2d vit, ResidualCNN (E=channels)
 
-    Карпатов сделал ln на входе, хотя многие рисуют на выходе.
-    Это сказывается тоько на первом и последнем блоке.
-    Наверное как у Карпатова правильнее (нормируем перед вычислениями).
+    align(x) = x                              if y.shape == x.shape for y=block(x)
+             = Linear(E_in, E_out)            if y.shape != x.shape and dim==1
+             = Conv2d(E_in, E_out, kernel=1)  if y.shape != x.shape and dim==2
+
+    (res==1): gamma = 1; (res==2) gamma - trainable scalar; (res==3) gamma - trainable vector(E)
+    ```
     """
-    def __init__(self, module, E, res = 1, skip=1., gamma=0.1, drop=0., vit2d=False, name=""):
+    def __init__(self, block, E, Eout=None, stride=1, res = 1, gamma=0.1, drop=0., dim=1,
+                norm_before=1, norm_after=0, norm_align=0,
+                fun="", name=""):
         super().__init__()
+        Eout = Eout or E
         self.name = name
-        self.norm  = LayerNormChannels(E) if vit2d else nn.LayerNorm (E)
-        self.module = module
+
+        if   norm_before == 1:
+            self.norm  = nn.BatchNorm2d(E)    if dim==2 else nn.BatchNorm1d(E)
+        elif norm_before == 2:
+            self.norm  = nn.InstanceNorm2d(E) if dim==2 else nn.LayerNorm (E)
+        else:
+            self.norm  = nn.Identity()
+
+        self.block = block
         if   res == 3:                # training multiplier for each components
-            if  vit2d:
+            if dim==2:
                 self.gamma = nn.Parameter( torch.empty(1, E, 1,1).fill_(float(gamma)) )
             else:
                 self.gamma = nn.Parameter( torch.empty(1, 1, E ).fill_(float(gamma)) )
-
         elif res == 2:                # training common multiplier
             self.gamma = nn.Parameter( torch.tensor(float(gamma)) )     # 0 ??? Julius Ruseckas
         else:                         # constant multiplayer
-            self.register_buffer("gamma", torch.tensor(1.) )
+            self.register_buffer("gamma", torch.tensor(float(res)) )  # 1 or ...
 
-        self.register_buffer("skip", torch.tensor(float(skip)) )
-        
-        self.drop  = nn.Dropout2d(drop)  if vit2d else nn.Dropout(drop)
+        if Eout == E and stride==1:
+            self.align = nn.Identity()
+        else:
+            self.align = ResidualAlign(E, Eout, stride, norm_align, dim)
 
-        self.debug  = False         # see forward
+        if norm_after or fun:
+            self.after = ResidualAfter(Eout, norm_after, dim, fun)
+        else:
+            self.after = nn.Identity()
+
+        self.p     = 0
+        self.drop  = nn.Dropout2d(drop)  if dim==2 else nn.Dropout(drop)
+        self.std   = torch.tensor(float(0.))
+
+        # для статистической информации:
+        self.debug_state  = False   # see forward
         self.beta   = 0.9           # value of smoothing
         self.sqr_x  = None          # average of square value of block input
         self.sqr_dx = None
-        self.std    = torch.tensor(float(0))
 
         self.gamma_d  = None        # average for gamma data and grad
         self.gamma_g  = None        # (see update)
-        self.index    = 1 if vit2d else -1
+        self.index    = 1 if dim==2 else -1
 
     #---------------------------------------------------------------------------
 
     def update(self):
-        """ Call trainer before optim.zero_grad() """
-        self.module.update()
+        """ Called by trainer before optim.zero_grad() """
+        if hasattr(self.block, 'update'):
+            self.block.update()
 
         b, b1 = self.beta, 1-self.beta
-        d = self.gamma.detach().square().mean()
+        d = self.gamma.detach().square().mean()  # усредняем gammma**2 и её градиент**2
         if self.gamma_d is None: self.gamma_d = d
         else:                    self.gamma_d = b * self.gamma_d + b1 * d
 
@@ -80,15 +128,34 @@ class Residual(nn.Module):
 
     #---------------------------------------------------------------------------
 
-    def set_drop(self, value):
-        self.drop.p = value
+    def debug(self, value=True, beta=None):
+        self.debug_state = value
+        if beta is not None:
+            self.beta = beta
+    #---------------------------------------------------------------------------
+
+    def set_drop(self, drop=None, drop_block=None, std=None, p=None):
+        if drop is not None:
+            self.drop.p = drop
+
+        if drop_block is not None:
+            self.block.set_drop(drop_block)
+
+        if std is not None:
+            self.std = torch.tensor(float(std))
+
+        if p is not None:
+            self.p = p
 
     #---------------------------------------------------------------------------
 
-    def forward(self, x):                 # (B,T,E)
-        if self.debug:
-            dx = self.gamma * self.module( self.norm(x) )
-            x  = self.skip  * x
+    def forward(self, x):                      # (B,T,E) or (B,E,H,W)
+        if self.p and self.p > torch.rand(1):
+            return x                           # skip block (!)
+
+        if self.debug_state:
+            dx = self.gamma * self.block( self.norm(x) )
+            x  = self.align(x)
 
             v_x  = x. detach().square().sum(self.index).mean()
             v_dx = dx.detach().square().sum(self.index).mean()
@@ -109,10 +176,12 @@ class Residual(nn.Module):
         else:
             if self.std > 0:
                 if self.index < 0:
-                    x = self.skip * x + self.gamma * self.module( self.norm(x) ) * (1+torch.randn((x.size(0),x.size(1),1), device=x.device)*self.std)
+                    x = self.align(x) + self.gamma * self.block( self.norm(x) ) * (1+torch.randn((x.size(0),x.size(1),1), device=x.device)*self.std)
                 else:
                     x = x + dx * (1+torch.randn((x.size(0), 1, x.size(2), x.size(3)), device=x.device)*self.std)
             else:
-                x = self.skip * x + self.gamma * self.module( self.norm(x) )
+                x = self.align(x) + self.gamma * self.block( self.norm(x) )
 
-        return self.drop(x)
+        return self.drop( self.after(x) )
+
+    #---------------------------------------------------------------------------

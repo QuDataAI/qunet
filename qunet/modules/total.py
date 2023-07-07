@@ -1,6 +1,20 @@
 from inspect import isfunction
 import torch, torch.nn as nn
 import torch.nn.functional as F
+#===============================================================================
+
+class LayerNormChannels(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.norm = nn.LayerNorm(channels)
+
+    def forward(self, x):           # (B,C,H,W,...)
+        x = x.transpose(1, -1)      # (B,W,H,...,C)
+        x = self.norm(x)            # avg on index c, 2*C parameters
+        x = x.transpose(-1, 1)      # (B,C,H,W,...)
+        return x
+
+#===============================================================================
 
 def get_activation(activation, inplace=True):
     """
@@ -44,49 +58,30 @@ def get_activation(activation, inplace=True):
         assert isinstance(activation, nn.Module)
         return activation
 
+#===============================================================================
 
+
+def get_norm(E,  norm, dim):
+    if norm == 1:
+        return nn.BatchNorm1d(E)    if dim==1 else nn.BatchNorm2d(E) 
+    if norm == 2:
+        return nn.LayerNorm (E)     if dim==1 else LayerNormChannels(E)
+    if norm == 3:
+        return nn.InstanceNorm1d(E) if dim==1 else nn.InstanceNorm2d(E)
+    return nn.Identity()
 
 #===============================================================================
 
-class BaseModel(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
+def get_model_layers(model, kind, layers=[]):        
+    """Get a list of model layers of type kind
 
-        self.beta = 0.9
-        self.datas = []
-        self.grads = []
-
-    #---------------------------------------------------------------------------
-
-    def update(self, in_modules=[]):
-        """
-        Вызывается тренереном перед обнулением градиентов, если модуль добавлен fit(states=[])
-        in_modules = [ nn.Linear, nn.Conv2d]
-        """
-        i = 0
-        for layer in self.mlp:
-            if len(in_modules)==0 or type(layer) in in_modules:
-                if layer.weight.grad is None:
-                    g = 0                    
-                else:
-                    g = layer.weight.grad.square().mean().sqrt()
-                if len(self.grads) == i:
-                    self.grads.append(g)                    
-                else:
-                    self.grads[i] = self.cfg.beta * self.grads[i]  + (1-self.cfg.beta) * g
-
-                d = layer.weight.detach().square().mean().sqrt()
-                if len(self.datas) == i:                    
-                    self.datas.append(d)                    
-                else:
-                    self.datas[i] = self.beta * self.datas[i]  + (1-self.beta) * d
-
-                i += 1
-
-    #---------------------------------------------------------------------------                
-
-    def plot(self ):
-        """
-        Вызывается тренереном при построении графиков модели, если модуль добавлен fit(states=[])        
-        """
-        pass
+    Example:
+    ----------
+    layers = get_model_layers(model, (nn.Dropout1d, nn.Dropout2d) )
+    """
+    for mo in model.children():
+        if isinstance(mo, kind):
+            layers.append(mo)
+        else:
+            layers = get_model_layers(mo, kind, layers=layers)
+    return layers

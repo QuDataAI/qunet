@@ -13,7 +13,7 @@ def plot_transformer_blocks(blocks, w=12, h=3, eps=1e-8, bar_width = 0.25, info=
     ax.set_yscale('log')
     ax.set_ylabel("dx/x");  ax.set_xlabel("blocks");
 
-    plt.text(0,0,f" skip\n std\n", ha='left', transform = ax.transAxes, fontsize=6, family="monospace")
+    plt.text(0,0,f" std\n", ha='left', transform = ax.transAxes, fontsize=6, family="monospace")
             
     fft_dv, att_dv, mlp_dv = [0]*len(blocks), [0]*len(blocks), [0]*len(blocks)
     for i,block in enumerate(blocks):
@@ -32,7 +32,7 @@ def plot_transformer_blocks(blocks, w=12, h=3, eps=1e-8, bar_width = 0.25, info=
     ymin, ymax = ax.get_ylim()
     for i,block in enumerate(blocks):
         for layer in block.layers:
-            st =  f"{layer.skip.cpu().item():.1f}\n{layer.std.cpu().item():.1f}\n"
+            st =  f"{layer.std.cpu().item():.1f}\n"
             if layer.name == "fft":
                 plt.text(i,            ymin, st + "fft", ha='center', fontsize=6, family="monospace")
             if layer.name == "att":

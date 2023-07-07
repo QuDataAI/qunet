@@ -284,6 +284,34 @@ class Scheduler_Cos(Scheduler):
                     return self.lr1 + (self.lr_hot - self.lr1) * done / self.warmup
         return 0
 
+
+#===============================================================================
+
+class Scheduler_OneCicleRL(Scheduler_Cos):
+    def __init__(self, 
+                 epochs, lr_max = 1e-3,
+                 div_factor=25.0, final_div_factor=10000.0,  pct_start=0.3,
+                 enable:bool=True) -> None:
+        """
+        Scheduler_OneCicleRL with Cosine curve.
+
+        Args:
+        ------------
+            * lr_max (float: 1e-3)
+                max learning rate
+            * div_factor (float = 25.):
+                lr1 = lr_max / div_factor
+            * final_div_factor (float = 10000.):
+                lr2 = lr_max / final_div_factor        
+            * pct_start (float=0.3)
+                warmup = epochs * pct_start
+        """
+        lr1 = lr_max / div_factor
+        lr2 = lr_max / final_div_factor
+        warmup = epochs * pct_start
+        super().__init__(lr1=lr1, lr2=lr2, epochs=epochs, samples=None,  lr_hot=lr_max, warmup=warmup, enable=enable)
+        
+
 #===============================================================================
 #                                   Main
 #===============================================================================
@@ -296,8 +324,9 @@ if __name__ == '__main__':
     #scheduler.plot(samples=8000, epochs = 100)
     
     lst =[
-        Scheduler_Cos  (lr1=1e-4, lr_hot=1e-2, lr2=1e-3, samples=4000, warmup=1000),
-        Scheduler_Const(lr1=1e-3, samples=2000),
-        Scheduler_Exp  (lr1=1e-3, lr2=1e-5, epochs=20)
+        #Scheduler_Cos  (lr1=1e-4, lr_hot=1e-2, lr2=1e-3, samples=4000, warmup=1000),
+        #Scheduler_Const(lr1=1e-3, samples=2000),
+        #Scheduler_Exp  (lr1=1e-3, lr2=1e-5, epochs=20)
+        Scheduler_OneCicleRL(epochs=100)
     ]
     scheduler.plot_list(lst, samples=20000, epochs=100, log=True, w=5, h=4, title="Cos, Const, Exp Schedulers")

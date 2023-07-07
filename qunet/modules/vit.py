@@ -195,11 +195,11 @@ class ViT2dBlock(nn.Module):
         self.layers = nn.Sequential(
             Residual(                
                 Attention2d(E,H, grid),                
-                E = E,  vit2d=True, drop=drop, res=res, name="att"
+                E = E,  dim=2, drop=drop, res=res, name="att"
             ),
             Residual(                                        
                 MLP2d(E),                
-                E = E,  vit2d=True, drop=drop, res=res, name="mlp"
+                E = E,  dim=2, drop=drop, res=res, name="mlp"
             )
         )
     
