@@ -203,37 +203,75 @@ class ModelState:
 
     #---------------------------------------------------------------------------
 
-    def get_layers_descr(self, info = 0):
+    def get_layers_descr(self, info = 0):          
+        def t2s(t):
+            if type(t) == int:
+                return str(t)
+            if (type(t) == tuple and len(t)==2 and t[0]==t[1]):
+                return str(t[0])        
+            st = "("
+            for i,v in enumerate(t): st += str(v) + ("," if i+1 < len(t) else "")
+            return st + ")"
+
         for lr in self.__layers:
+            ops = None
             mo, depth, i, count = lr['module'], lr['depth'], lr['i'], lr['n_kids']
             nm = lr['name'].split('.')[-1]
             if count:
                 lr['st']=f"{'│' if depth else ''}{' '*max(0,3*depth-1)+'└─ ' if depth else '├─ '}{mo.__class__.__name__ if info >= 0 else nm}"
-            else:
                 layer = mo.__class__.__name__
-                descr = layer if info >= 0 else nm
-                if info == 1:
-                    if   layer == "Linear":   descr += f"({mo.in_features}->{mo.out_features})"
-                    elif layer == "Bilinear": descr += f"({mo.in1_features},{mo.in2_features}->{mo.out_features})"
-                    elif layer in ["Dropout", "Dropout2d", "Dropout3d"]:   descr += f"({mo.p})"
-                    elif layer in ["Conv1d","Conv2d","Conv3d"]: descr += f"({mo.in_channels}->{mo.out_channels})"
-                    elif layer in ["MaxPool1d", "MaxPool2d", "MaxPool3d"]: descr += f"({mo.kernel_size})"
-                    elif layer == 'Embedding': descr += f"({mo.num_embeddings},{mo.embedding_dim})"
-                    elif layer in ['RNN','GRU','LSTM']: descr += f"({mo.input_size},{mo.hidden_size})"    
-                    elif layer in ["AdaptiveAvgPool1d", "AdaptiveAvgPool2d"]: descr += f"({mo.output_size})"
-                elif info > 1:
-                    if   layer == "Linear": descr += f"({mo.in_features}->{mo.out_features}, {'T' if mo.bias is not None else 'F'})"
-                    elif layer in ["Dropout", "Dropout2d", "Dropout3d"]:   descr += f"({mo.p})"
-                    elif layer in ["Conv1d","Conv2d","Conv3d"]: descr += f"({mo.in_channels}->{mo.out_channels}, k:{mo.kernel_size}, s:{mo.stride}, p:{mo.padding}, {'T' if mo.bias is not None else 'F'})"
-                    elif layer in ["MaxPool1d", "MaxPool2d", "MaxPool3d"]: descr += f"(k:{mo.kernel_size}, s:{mo.stride}, p:{mo.padding})"
-                    elif layer in ["BatchNorm1d","BatchNorm2d","BatchNorm3d"]: descr += f"({mo.num_features})"
-                    elif layer == "LayerNorm": descr += f"({mo.normalized_shape})"
-                    elif layer == 'Embedding': descr += f"({mo.num_embeddings},{mo.embedding_dim})"
-                    elif layer in ['RNN','GRU','LSTM']: descr += f"({mo.input_size},{mo.hidden_size}, l:{mo.num_layers}, bi:{'T' if mo.bidirectional else 'F'})"
-                    elif layer in ["AdaptiveAvgPool1d", "AdaptiveAvgPool2d"]: descr += f"({mo.output_size})"
+                if layer == 'Attention':
+                    if lr['input']:     
+                        B,T,E = lr['input']        
+                        H = mo.cfg.H           
+                        ops = B*(4*T*E*E +  2*T*T*E*H)
+            else:
+                ops = None
+                layer = mo.__class__.__name__
+                descr = layer if info >= 0 else nm                
+                if layer == "Linear":                       
+                    descr += f"({mo.in_features}->{mo.out_features}, {'T' if mo.bias is not None else 'F'})"
+                    if lr['input']:
+                        B = np.prod(lr['input'][:-1])
+                        ops = B * mo.in_features*(mo.out_features + (1 if mo.bias is not None else 0))
+                elif layer == "Bilinear": 
+                    descr += f"({mo.in1_features},{mo.in2_features}->{mo.out_features})"                    
+                elif layer in ["Dropout", "Dropout2d", "Dropout3d"]:   
+                    descr += f"({mo.p})"
+                    #if lr['input']:
+                    #    ops = np.prod(lr['input'])
+                elif layer in ["ShiftFeatures"]: 
+                    descr += f"({mo.std})"                                                            
+                elif layer in ["BatchNorm1d","BatchNorm2d","BatchNorm3d"]: 
+                    descr += f"({mo.num_features})"                    
+                elif layer == "LayerNorm": 
+                    descr += f"({mo.normalized_shape})"                    
+                elif layer in ["Conv1d","Conv2d","Conv3d"]: 
+                    if info == 1:  descr += f"({mo.in_channels}->{mo.out_channels})"
+                    elif info > 1: descr += f"({mo.in_channels}->{mo.out_channels}, k:{t2s(mo.kernel_size)}, s:{t2s(mo.stride)}, p:{t2s(mo.padding)}, {'T' if mo.bias is not None else 'F'})"                    
+                    if lr['input'] and layer == "Conv2d":                        
+                        B, _ ,H1,W1 = lr['input']
+                        (kh,kw) = (mo.kernel_size, mo.kernel_size) if type(mo.kernel_size) == int else mo.kernel_size
+                        (sh,sw) = (mo.stride, mo.stride)           if type(mo.stride)      == int else mo.stride
+                        ops = B * mo.in_channels*(mo.out_channels + (1 if mo.bias is not None  else 0)) * H1*W1*kh*kw // (sh*sw)
+                elif layer in ["MaxPool1d", "MaxPool2d", "MaxPool3d"]: 
+                    if info == 1:  descr += f"(k:{mo.kernel_size}, s:{mo.stride})"
+                    elif info > 1: descr += f"(k:{t2s(mo.kernel_size)}, s:{t2s(mo.stride)}, p:{t2s(mo.padding)})"
+                elif layer == 'Embedding': 
+                    descr += f"({mo.num_embeddings},{mo.embedding_dim})"
+                elif layer in ['RNN','GRU','LSTM']: 
+                    if info == 1:  descr += f"({mo.input_size},{mo.hidden_size})"    
+                    elif info > 1: descr += f"({mo.input_size},{mo.hidden_size}, l:{mo.num_layers}, bi:{'T' if mo.bidirectional else 'F'})"
+                elif layer in ["AdaptiveAvgPool1d", "AdaptiveAvgPool2d"]: 
+                    descr += f"({mo.output_size})"
+                elif layer in ['ReLU', 'GELU', 'Sigmoid', 'Tanh', 'ReLU6' ]: 
+                    #if lr['input']:                        
+                    #    ops = np.prod(lr['input'])
+                    pass
 
                 skip = f"│{' '*max(0,3*depth-1)}{'├─ ' if i+1 < count else '└─ '}" if depth > 0 else "├─ "
                 lr['st'] = f"{skip}{descr}"
+            lr['ops'] = ops if ops is None else int(ops / 1e3)
 
     #---------------------------------------------------------------------------
     #
@@ -249,8 +287,7 @@ class ModelState:
                 show path to given layer (for -1,0,1)
         """
         if len(self.__layers) == 0:
-            self.get_layers(self.model, layers=self.__layers)
-        self.get_layers_descr(info = info)                        # info can change
+            self.get_layers(self.model, layers=self.__layers)        
 
         if len(self.__layers) == 0:
             print(self.model.__class__.__name__ + " model empty")
@@ -259,47 +296,68 @@ class ModelState:
         if len(self.__params) == 0:
             self.reset()
 
-        if input_size is not None or  input_data is not None:
+        is_input = input_size is not None or  input_data is not None
+        if is_input:
             self.forward(input_size=input_size, input_data=input_data)
-            inp_w = max( [len(ln['input'])  for ln in self.__layers ])
-            out_w = max( [len(ln['output']) for ln in self.__layers ])
+            inp_w = max( [len(str(lr['input']))  for lr in self.__layers ])
+            out_w = max( [len(str(lr['output'])) for lr in self.__layers ])
 
-        total_num = self.num_params(True)
-        ma = max( [ len(ln['st']) for ln in self.__layers ] )
-        print(self.model.__class__.__name__ + " "*(ma-len(self.model.__class__.__name__))+"      params           data")
-        for ln in self.__layers:
-            if ln['module'].__class__.__name__ == "Identity":
+        self.get_layers_descr(info = info)                        # info can change
+
+        total_num, tot_ops = self.num_params(True), 0
+        ma = max( [ len(lr['st']) for lr in self.__layers ] )
+        if is_input:
+            print(self.model.__class__.__name__ + " "*(ma-len(self.model.__class__.__name__))+"      params            input -> output shapes" + " "*(inp_w+out_w+4-22) + "   1k-ops")
+        else:
+            print(self.model.__class__.__name__ + " "*(ma-len(self.model.__class__.__name__))+"      params           values")
+
+        for idx, lr in enumerate(self.__layers):
+            if lr['module'].__class__.__name__ == "Identity":
                 continue
 
             shapes = ""
             if input_size is not None or  input_data is not None:
-                shapes  = ln['input']  +' '*(inp_w-len(ln['input'])) + ' -> '
-                shapes += ln['output'] +' '*(out_w-len(ln['output']))
+                shapes  = str(lr['input'])  +' '*(inp_w-len(str(lr['input']))) + ' -> '
+                shapes += str(lr['output']) +' '*(out_w-len(str(lr['output'])))
+                if len(lr['input']) and len(lr['output']):
+                    shapes += f"[{np.prod(lr['input'])/np.prod(lr['output']):.2f}]"
                 data = ""
+
+            tot_ops += lr['ops'] if lr['ops'] is not None else 0
+            ops = f"{ModelState.i2s(lr['ops'],12)}" if 'ops' in lr and lr['ops'] is not None else " "*12
+            
+            op, ps = 0, 0
+            for i in range(idx+1, len(self.__layers)):                
+                if self.__layers[i]['depth'] <= lr['depth']:
+                    break                        
+                op += self.__layers[i]['ops'] if self.__layers[i]['ops'] is not None else 0       
+                ps+= self.sum_values(self.__layers[i]['params'], kind='numel')         
+            if op:
+                ops = f"p/o={ps/1000:.0f}/{op/1000:.1f}"
 
             name = ""
             if is_names and info <= 1:
-                lst = ln['name'].split('.')
+                lst = lr['name'].split('.')
                 name = ".".join([ f"[{n}]" if n.isdigit() else n for n in lst])
                 name = name.replace(".[", "[" )
                 if name[0]==".":
                     name = name[1:]
                 name = ' <  ' + name
 
-            if len(ln['params']) > 0:
-                num  = self.sum_values(ln['params'], kind='numel')
+            if len(lr['params']) > 0:
+                num  = self.sum_values(lr['params'], kind='numel')
                 prs  = 100*num/total_num
-                data = f"{(self.sum_values(ln['params'], kind='data') / num)**0.5:5.3f}"
+                data = f"{(self.sum_values(lr['params'], kind='data') / num)**0.5:5.3f}"
                 num_st  = ModelState.i2s(num)
                 prs_st  = f"~ {prs:3.0f}%" if prs > 0.5 else " "*6
 
                 if input_size is not None or  input_data is not None:
                     data = ""
 
-                print(f"{ln['st']+' '*(ma-len(ln['st']))}  {num_st}  {prs_st} | {data} {shapes} {name}")
+                print(f"{lr['st']+' '*(ma-len(lr['st']))}  {num_st}  {prs_st} | {data} {shapes} {ops if is_input else ''} {'' if is_input else name}")
             else:
                 w = 19 if  input_size is not None or  input_data is not None else 24
-                print(f"{ln['st']+' '*(ma-len(ln['st']))} {' '*w}    {shapes} {name}")
+                print(f"{lr['st']+' '*(ma-len(lr['st']))} {' '*w}    {shapes} {ops if is_input else ''} {'' if is_input else name}")
 
         print("="*(ma+12))
         n1, n2, n3 = self.num_params(True),  self.num_params(False),  self.num_params(None)
@@ -308,6 +366,7 @@ class ModelState:
             print(f"{'other:'+' '*(ma-11)}     {ModelState.i2s(n2,12)}")
             print(f"{'total:'+' '*(ma-11)}     {ModelState.i2s(n3,12)}")
 
+        print(f"tot_ops:{ModelState.i2s(tot_ops,12)}")
     #---------------------------------------------------------------------------
 
     def state(self):
@@ -332,7 +391,7 @@ class ModelState:
         idx = self.__layersID[id(m)]
         if len(inputs):
             if torch.is_tensor(inputs[0]):
-                self.__layers[idx]['input'] = f"{tuple(inputs[0].shape)}"
+                self.__layers[idx]['input'] = tuple(inputs[0].shape)
             else:
                 self.__layers[idx]['input'] = "???"
         else:
@@ -350,7 +409,7 @@ class ModelState:
         assert id(m) in self.__layersID, f"module {id(m)} should be in __layersID"
         idx = self.__layersID[id(m)]
         if torch.is_tensor(output):
-            self.__layers[idx]['output'] = f"{tuple(output.shape)}"
+            self.__layers[idx]['output'] = tuple(output.shape)
         elif type(output) in [list, tuple] and len(output) and torch.is_tensor(output[0]):
             self.__layers[idx]['output'] = f"{tuple(output[0].shape)}, ..."
         else:
@@ -390,8 +449,7 @@ class ModelState:
                     y = self.model(*x)
                 else:
                     y = self.model(x)
-
-            print(f"{self.model.__class__.__name__}:  {tuple(x.shape)} -> {tuple(y.shape)}")
+            print(f"{self.model.__class__.__name__}:  {tuple(x.shape)} -> {tuple(y.shape)} [{np.prod(x.shape)/np.prod(y.shape):.2f}]")
 
         for lr in self.__layers:
             if 'forward_pre_hook_handle' in lr:

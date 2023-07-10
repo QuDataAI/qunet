@@ -6,6 +6,7 @@ from ..config           import Config
 from .mlp               import MLP
 from .residual          import Residual
 from .transformer_plot  import plot_transformer_blocks
+from ..modelstate       import ModelState
 
     
 #===============================================================================
@@ -29,8 +30,6 @@ class Attention(nn.Module):
                 dropout probability after softmax
             res (int=1):
                 kind of skip-connections (for TransformerBlock): (1) x+f(x), (2)  x+w*f(x) - w training one for all E; (3) w training for each E
-            skip (float = 1.):
-                # fixed multiplier for skip loop:  skip*x + w*f(x) - can be turned off
             causal (bool=False):
                 kind of causal attention mask (True: GPT, False: BERT)
             T_max (int=2048):
@@ -258,7 +257,7 @@ class  TransformerBlock(nn.Module):
             drop (float=0.0):
                 dropout probability after block
             res (int=1):
-                kind of skip-connections: (0) f(x) - none; (1) x+f(x), (2)  x*w+f(x) training one for all E; (3) training for each E
+                kind of skip-connections: (0) f(x) - none; (1) x+f(x), (2)  x+w*f(x) training one for all E; (3) training for each E
             causal (bool=False):
                 kind of causal attention mask (True: GPT, False: BERT)
             T_max (int=2048):
@@ -284,9 +283,6 @@ class  TransformerBlock(nn.Module):
         if 'H' in kvargs:
             self.cfg.att.H = kvargs['H']
 
-        if 'drop' in kvargs:
-            self.cfg.att.drop = self.cfg.mlp.drop  = kvargs['drop']
-
         if 'causal' in kvargs:
             self.cfg.att.causal = kvargs['causal']
 
@@ -301,19 +297,19 @@ class  TransformerBlock(nn.Module):
     def default():
         return copy.deepcopy(Config(
             E      = None,              # tokens embedding dimension    
+            H      = 1,
 
             is_fft = 0,
             is_att = 1,
             is_mlp = 1,            
 
             res    = 2,
-            norm   = 2,
-            skip   = 1.0,
+            norm   = 2,            
             gamma  = 0.0,
             drop   = 0.0,               # dropout probability after block
 
             att = Attention.default(),
-            mlp = Config(MLP.default(), stretch=4, res=1, skip=1.0),
+            mlp = Config(MLP.default(), stretch=4, res=1),
             fft = FFT.default(),
         ))
 
@@ -325,11 +321,11 @@ class  TransformerBlock(nn.Module):
 
         layers = []
         if cfg.is_fft:
-            layers.append( Residual(FFT(cfg.fft),       E=cfg.att.E, res=cfg.res, skip=cfg.skip, gamma=cfg.gamma, drop=cfg.drop, norm_before=cfg.norm, name="fft") )
+            layers.append( Residual(FFT(cfg.fft),       E=cfg.att.E, res=cfg.res,  gamma=cfg.gamma,  norm_before=cfg.norm, name="fft") )
         if cfg.is_att:
-            layers.append( Residual(Attention(cfg.att), E=cfg.att.E, res=cfg.res, skip=cfg.skip, gamma=cfg.gamma, drop=cfg.drop, norm_before=cfg.norm, name="att") )
+            layers.append( Residual(Attention(cfg.att), E=cfg.att.E, res=cfg.res,  gamma=cfg.gamma,  norm_before=cfg.norm, name="att") )
         if cfg.is_mlp:
-            layers.append( Residual(MLP(cfg.mlp),       E=cfg.att.E, res=cfg.res, skip=cfg.skip, gamma=cfg.gamma, drop=cfg.drop, norm_before=cfg.norm, name="mlp") )
+            layers.append( Residual(MLP(cfg.mlp),       E=cfg.att.E, res=cfg.res,  gamma=cfg.gamma,  norm_before=cfg.norm, name="mlp") )
     
         self.layers = nn.Sequential( *layers )
 
@@ -355,11 +351,6 @@ class  TransformerBlock(nn.Module):
             res.update( layer.decay() )
         return res
 
-    #---------------------------------------------------------------------------
-
-    def set_drop(self, drop):
-        for layer in self.layers:        
-            layer.set_drop( drop )
 
     #---------------------------------------------------------------------------
 
@@ -401,10 +392,8 @@ class  Transformer(nn.Module):
                 number of heads E % H == 0 !
             n_blocks (int=1):
                 number of transformer blocks
-            drop: (float=0.0):
-                dropout in attention, mlp and after res block
             res (int=1):
-                kind of skip-connections: (0) f(x) - none; (1) x+f(x), (2)  x*w+f(x) training one for all E; (3) training for each E
+                kind of skip-connections: (0) f(x) - none; (1) x+f(x), (2)  x+w*f(x) training one for all E; (3) training for each E
             causal (bool=False):
                 kind of causal attention mask (True: GPT, False: Bert)
             T_max  (int=2048):
@@ -434,17 +423,13 @@ class  Transformer(nn.Module):
 
         cfg.block.E     = cfg.E
         cfg.block.res   = cfg.res
-        cfg.block.gamma = cfg.gamma
-        cfg.block.skip  = cfg.skip
+        cfg.block.gamma = cfg.gamma        
         
         H = kvargs['H'] if 'H' in kvargs else (self.cfg.H if self.cfg.has('H') else self.cfg.block.att.H)
         self.cfg.block.att.H = H
 
         res = kvargs['res'] if 'res' in kvargs else (self.cfg.res if self.cfg.has('res') else self.cfg.block.att.res)
         self.cfg.block.fft.res = self.cfg.block.att.res = self.cfg.block.mlp.res = res
-
-        drop = kvargs['drop'] if 'drop' in kvargs else (self.cfg.drop if self.cfg.has('drop') else self.cfg.block.att.drop)
-        self.cfg.block.fft.drop = self.cfg.block.att.drop = self.cfg.block.mlp.drop = drop
 
         causal = kvargs['causal'] if 'causal' in kvargs else (self.cfg.causal if self.cfg.has('causal') else self.cfg.block.att.causal)
         self.cfg.block.att.causal = causal
@@ -467,8 +452,7 @@ class  Transformer(nn.Module):
             is_fft    = 0,     # there is a FFT (FNet) block, can be a list (for each block)
             is_att    = 1,     # there is an attention block, can be a list (for each block)
             is_mlp    = 1,     # there is an MLP block, can be a list (for each block)
-            res       = 2,
-            skip      = 1.0,
+            res       = 2,            
             gamma     = 0.1,   # initial value of the learning residual multiplier
             block = TransformerBlock.default()
         ))
@@ -520,12 +504,6 @@ class  Transformer(nn.Module):
 
     #---------------------------------------------------------------------------
 
-    def set_drop(self, fft=0, att=0, mlp=0):
-        for block in self.blocks:
-            block.set_drop(fft=fft, att=att, mlp=mlp)
-
-    #---------------------------------------------------------------------------
-
     def plot(self, w=12, h=3, eps=1e-8, bar_width = 0.25, info=False):
         plot_transformer_blocks(self.blocks, w=w, h=h, eps=eps, bar_width = bar_width, info=info)
         
@@ -534,16 +512,18 @@ class  Transformer(nn.Module):
     @staticmethod
     def unit_test():
         B, T, E, H = 1, 10, 128, 16
-        cfg = Config(E=E, H=H, n_blocks=10, is_fft=1, is_att=1, res=2, gamma=0.2)
+        cfg = Config(E=E, H=H, n_blocks=2, is_fft=1, is_att=1, res=2, gamma=0.2)
         m = Transformer(cfg)
         x = torch.rand(B,T,E)  # (B,T,E) = (batch, token, embedding)
+
+        #state = ModelState(m)
+        #state.layers(2, input_size=(B,T,E))
 
         m.debug(True)        
         y = m(x)               # (B,T,E) -> (B,T,E)
         y.mean().backward()
         m.update()
         #print( m.plot(info=True) )
-
         #for block in m.blocks: print(block.cfg)
 
         res = x.shape == y.shape

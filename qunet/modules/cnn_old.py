@@ -4,7 +4,7 @@ import torch, torch.nn as nn
 
 from ..config import Config
 from ..modelstate import ModelState
-from .total  import get_activation
+from .total  import Create
 #========================================================================================
 
 class CNN(nn.Module):
@@ -133,7 +133,7 @@ class CNN(nn.Module):
             elif cfg.norm[i] == 2:
                 layers += [ nn.InstanceNorm2d( channels[i+1] ) ]
 
-            layers +=  [ get_activation(self.cfg.fun) ]
+            layers +=  [ Create.activation(self.cfg.fun) ]
 
             if h: h = int( (h + 2*pad - ker) / stride + 1)
             if w: w = int( (w + 2*pad - ker) / stride + 1)
@@ -283,7 +283,7 @@ class ResBlockCNN(nn.Module):
                 layers += [ nn.InstanceNorm2d( channels[i+1] ) ]
 
             if i < len(channels)-2:
-                layers += [ get_activation(cfg.fun)  ]
+                layers += [ Create.activation(cfg.fun)  ]
 
         self.block = nn.Sequential(*layers)
         
@@ -308,7 +308,7 @@ class ResBlockCNN(nn.Module):
         
         self.out_fun = None
         if cfg.fun_after:
-            self.out_fun = get_activation(cfg.fun)   # after skip connection        
+            self.out_fun = Create.activation(cfg.fun)   # after skip connection        
 
         if cfg.drop_d == 2:
             self.drop = nn.Dropout2d(p=cfg.drop)
@@ -703,9 +703,9 @@ class SEBlock(nn.Module):
 
         self.pool = nn.AdaptiveAvgPool2d(output_size=1)
         self.conv1 =  nn.Conv2d(in_channels=n_channels, out_channels=mid_cannels, kernel_size=1, stride=1, bias=True)
-        self.activ = get_activation(activation)
+        self.activ = Create.activation(activation)
         self.conv2 = nn.Conv2d(in_channels=mid_cannels, out_channels=n_channels, kernel_size=1, stride=1, bias=True)
-        self.sigmoid = get_activation("hsigmoid") if approx_sigmoid else nn.Sigmoid()
+        self.sigmoid = Create.activation("hsigmoid") if approx_sigmoid else nn.Sigmoid()
 
     def forward(self, x):
         w = self.pool(x)

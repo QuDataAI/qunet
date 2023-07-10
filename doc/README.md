@@ -6,8 +6,15 @@
 * [Trainer.plot()](trainer_plot.md) - visualization of the training process
 * [Save and load models](save.md)
 * [Using Schedules](schedules.md)
-* [Modules](modules.md) - description of the architectures implemented in the QuNet library
 * [Config](config.md) - working with the Config class (model or project parameters)
+* [WandB](wandb.md) - WandB intregration
+* [EMA](ema.md) - Exponential Moving Average
+
+Modules:
+
+* [Modules](modules.md) - description of the architectures implemented in the QuNet library
+* [CNN](cnn.md) 
+
 
 <hr>
 

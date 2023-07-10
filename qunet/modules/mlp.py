@@ -3,7 +3,7 @@ import numpy as np, matplotlib.pyplot as plt
 import torch, torch.nn as nn
 
 from ..config import Config
-from .total   import get_activation
+from .total   import Create
 
 #========================================================================================
 
@@ -117,7 +117,7 @@ class MLP(nn.Module):
         for i in range (1, len(self.neurons)):
             seq += [ nn.Linear(self.neurons[i-1],  self.neurons[i]) ]
             if i+1 < len(self.neurons):
-                seq += [get_activation(self.cfg.fun),
+                seq += [Create.activation(self.cfg.fun),
                         nn.Dropout(self.cfg.drop)     ]
                 if self.cfg.norm:
                     seq += [ UnitTensor() ]

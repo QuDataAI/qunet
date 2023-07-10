@@ -190,16 +190,16 @@ class MLP2d(nn.Sequential):
 #===============================================================================
 
 class ViT2dBlock(nn.Module):
-    def __init__(self, E, H, grid, drop=0., res=1):
+    def __init__(self, E, H, grid,  res=1):
         super().__init__()
         self.layers = nn.Sequential(
             Residual(                
                 Attention2d(E,H, grid),                
-                E = E,  dim=2, drop=drop, res=res, name="att"
+                E = E,  dim=2, res=res, name="att"
             ),
             Residual(                                        
                 MLP2d(E),                
-                E = E,  dim=2, drop=drop, res=res, name="mlp"
+                E = E,  dim=2, res=res, name="mlp"
             )
         )
     
@@ -244,11 +244,11 @@ class Vit2d(nn.Module):
         cfg = self.cfg.set(*args, **kvargs)
 
         self.emb = VitEmb(Config(input=cfg.input, E=cfg.E, patch=cfg.patch,  
-                                 hidden=cfg.hidden, drop=cfg.drop_emb, flat=False) )
+                                 hidden=cfg.hidden, flat=False) )
 
         blocks = []
         for i in range(cfg.n_blocks):
-            block = ViT2dBlock(E=cfg.E, H=cfg.H, grid=self.emb.grid, drop=cfg.drop_res, res=cfg.res)
+            block = ViT2dBlock(E=cfg.E, H=cfg.H, grid=self.emb.grid,  res=cfg.res)
             blocks.append(block)
         self.blocks= nn.ModuleList(blocks)        
 
@@ -316,8 +316,8 @@ class Vit2d(nn.Module):
         print(y.mean())
         #print(y)
         y.mean().backward()
-        vit.update()
-        vit.plot(info=True)
+        #vit.update()
+        #vit.plot(info=True)
 
 
         print(f"ok Vit2d: {tuple(x.shape)} -> {tuple(y.shape)}")

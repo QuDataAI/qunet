@@ -16,7 +16,7 @@ class Trainer:
     Generic model training class.
     Any method can, of course, be overridden by inheritance or by an instance.
     """
-    def __init__(self, model=None, data_trn=None, data_val=None, callbacks=[], score_max=True, wandb_cfg=None, ema=False, ema_decay=0.9999, ema_start_epoch=1) -> None:
+    def __init__(self, model=None, data_trn=None, data_val=None, callbacks=[], score_max=True, wandb_cfg=None, ema_cfg=None) -> None:
         """
         Trainer
 
@@ -40,12 +40,12 @@ class Trainer:
                         WANDB project name
                     run_name(str, optional)
                         WANDB run name
-            ema (bool)
-                enable EMA (Exponential Moving Average) support
-            ema_decay (float)
-                average decay for EMA
-            ema_start_epoch (int)
-                first epoch to average weights (avoid first random values impact)
+            ema_cfg (Config):
+                EMA (Exponential Moving Average) support
+                    decay(float)
+                        average decay for EMA
+                    start_epoch(int)
+                        first epoch to average weights (avoid first random values impact)
         """
         self.model     = model
         self.score_max = score_max       # метрика должна быть максимальной (например accuracy)
@@ -65,10 +65,8 @@ class Trainer:
 
         self.data = Config(trn = data_trn,  val = data_val)
 
-        self.ema = ema                              # enable EMA (Exponential Moving Average) support
-        self.ema_decay = ema_decay                  # average decay for EMA
-        self.ema_start_epoch = ema_start_epoch      # first epoch to average weights (avoid first random values impact)
-        self.model_ema = None                       # reference to ema model
+        self.ema_cfg = ema_cfg           # enable EMA (Exponential Moving Average) support
+        self.model_ema = None            # reference to ema model
 
         self.best = Config(
             score = None,               # best val score
@@ -989,10 +987,16 @@ class Trainer:
         
         if ClassModel is None:
             ClassModel = state.get('class')
-        trainer.model = ClassModel(state['config'])            
+            
+        if len(state['config'].get_str()) == 0:
+            trainer.model = ClassModel()            
+        else:
+            trainer.model = ClassModel(state['config'])            
+            
+        trainer.model.to(trainer.device)
             
         if trainer.model is not None:        
-            trainer.model.load_state_dict(state['model'])
+            trainer.model.load_state_dict(state['model'])            
 
         if trainer.model is not None:
             if 'optim_state' in state and 'optim' in state:
@@ -1093,8 +1097,8 @@ class Trainer:
             return
         
         # create EMA model if not exists
-        if self.ema and (self.model_ema is None) and (self.ema_start_epoch < self.epoch):
-            self.model_ema = ModelEma(self.model, self.ema_decay, self.device)
+        if self.ema_cfg and (self.model_ema is None) and (self.ema_cfg.start_epoch < self.epoch):
+            self.model_ema = ModelEma(self.model, self.ema_cfg.decay, self.device)
             return
 
         if self.model_ema is None:

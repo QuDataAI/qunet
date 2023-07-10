@@ -1,12 +1,16 @@
 from inspect import isfunction
 import torch, torch.nn as nn
 import torch.nn.functional as F
+
+#===============================================================================
+#  Общие модули, использующиеся в различных классах папаки modules
 #===============================================================================
 
 class LayerNormChannels(nn.Module):
     def __init__(self, channels):
         super().__init__()
         self.norm = nn.LayerNorm(channels)
+    #---------------------------------------------------------------------------
 
     def forward(self, x):           # (B,C,H,W,...)
         x = x.transpose(1, -1)      # (B,W,H,...,C)
@@ -16,72 +20,193 @@ class LayerNormChannels(nn.Module):
 
 #===============================================================================
 
-def get_activation(activation, inplace=True):
-    """
-    Create activation layer from string/function.
+class ShiftFeatures(nn.Module):
+    def __init__(self, std=0.):
+        super().__init__()
+        self.std = std
+    #---------------------------------------------------------------------------        
 
-    Args
-    ----------
-    activation (function, or str, or nn.Module):
-        Activation function or name of activation function.
-    inplace (bool: True)
-
-    Returns
-    -------
-    nn.Module
-        Activation layer.
-    """
-    assert (activation is not None)
-    if isfunction(activation):
-        return activation()
-    elif isinstance(activation, str):
-        if activation     == "sigmoid":
-            return  nn.Sigmoid()
-        elif activation   == "tanh":
-            return nn.Tanh()
-        elif activation   == "gelu":
-            return  nn.GELU()    
-        elif activation   == "relu":
-            return nn.ReLU(inplace=inplace)
-        elif activation == "relu6":
-            return nn.ReLU6(inplace=inplace)
-        elif activation == "swish":
-            return  lambda x: x * torch.sigmoid(x)                      # Swish()  https://arxiv.org/abs/1710.05941.
-        elif activation == "hswish":
-            return lambda x: x * F.relu6(x+3.0, inplace=inplace) / 6.0  # HSwish() https://arxiv.org/abs/1905.02244.
-        elif activation == "hsigmoid":
-            return lambda x: F.relu6(x+3.0, inplace=inplace) / 6.0      # HSigmoid() https://arxiv.org/abs/1905.02244.
+    def forward(self, x):           # (B,E) or (B,T,E) or (B,E,H,W) or (B,E,D,H,W)
+        if self.std == 0.0 or not self.training:
+            return x
         
-        else:
-            raise NotImplementedError()
-    else:
-        assert isinstance(activation, nn.Module)
-        return activation
+        if x.dim() == 2:
+            B,E = x.shape
+            return x + (self.std / E**0.5) * torch.randn((B,E), device=x.device)
+        if x.dim() == 3:
+            B,_,E = x.shape
+            return x + (self.std / E**0.5) * torch.randn((B,1,E), device=x.device)
+        if x.dim() == 4:
+            B,C,_,_ = x.shape
+            return x + (self.std / C**0.5) * torch.randn((B,C,1,1), device=x.device)
+        if x.dim() == 5:
+            B,C,_,_,_ = x.shape
+            return x + (self.std / C**0.5) * torch.randn((B,C,1,1,1), device=x.device)
+                
+        assert False, f"Wrong dim of tensor x: {x.shape}"
 
 #===============================================================================
-
-
-def get_norm(E,  norm, dim):
-    if norm == 1:
-        return nn.BatchNorm1d(E)    if dim==1 else nn.BatchNorm2d(E) 
-    if norm == 2:
-        return nn.LayerNorm (E)     if dim==1 else LayerNormChannels(E)
-    if norm == 3:
-        return nn.InstanceNorm1d(E) if dim==1 else nn.InstanceNorm2d(E)
-    return nn.Identity()
-
+# Набор статических методов, создающих различные элементарные модули
 #===============================================================================
 
-def get_model_layers(model, kind, layers=[]):        
-    """Get a list of model layers of type kind
+class Create:
 
-    Example:
-    ----------
-    layers = get_model_layers(model, (nn.Dropout1d, nn.Dropout2d) )
-    """
-    for mo in model.children():
-        if isinstance(mo, kind):
-            layers.append(mo)
+    @staticmethod
+    def activation(fun, inplace=True):
+        """
+        Create activation layer from string/function.
+
+        Args
+        ----------
+        activation (function, or str, or nn.Module):
+            Activation function or name of activation function.
+        inplace (bool: True)
+
+        Returns
+        -------
+        nn.Module
+            Activation layer.
+        """
+        assert (fun is not None)
+        if isfunction(fun):
+            return fun()
+        elif isinstance(fun, str):
+            if fun     == "sigmoid":
+                return  nn.Sigmoid()
+            elif fun   == "tanh":
+                return nn.Tanh()
+            elif fun   == "gelu":
+                return  nn.GELU()    
+            elif fun   == "relu":
+                return nn.ReLU(inplace=inplace)
+            elif fun == "relu6":
+                return nn.ReLU6(inplace=inplace)
+            elif fun == "swish":                 # https://arxiv.org/abs/1710.05941
+                return  lambda x: x * torch.sigmoid(x)                      
+            elif fun == "hswish":                # https://arxiv.org/abs/1905.02244
+                return lambda x: x * F.relu6(x+3.0, inplace=inplace) / 6.0  
+            elif fun == "hsigmoid":              # https://arxiv.org/abs/1905.02244
+                return lambda x: F.relu6(x+3.0, inplace=inplace) / 6.0      
+        
+            else:
+                raise NotImplementedError()
         else:
-            layers = get_model_layers(mo, kind, layers=layers)
-    return layers
+            assert isinstance(fun, nn.Module)
+            return fun
+
+    #---------------------------------------------------------------------------
+    @staticmethod
+    def norm(E,  norm, dim):
+        if norm == 1:
+            return nn.BatchNorm1d(E)    if dim==1 else nn.BatchNorm2d(E) 
+        if norm == 2:
+            return nn.LayerNorm (E)     if dim==1 else LayerNormChannels(E)
+        if norm == 3:
+            return nn.InstanceNorm1d(E) if dim==1 else nn.InstanceNorm2d(E)
+        return nn.Identity()
+
+    #---------------------------------------------------------------------------
+    @staticmethod
+    def dropout(dim, p=0):
+        if dim == 1:
+            return nn.Dropout(p)
+        if dim == 2:
+            return nn.Dropout2d(p)        
+        return nn.Identity()
+
+#===============================================================================
+# Набор статических методов, изменяющих параметры модели
+#===============================================================================
+
+class Change:
+
+    @staticmethod
+    def linear(model):
+        """Reset Conv2d, Linear weights to kaiming_normal_ and bias to 0
+        """
+        def init(m):
+            if isinstance(m, (nn.Conv2d, nn.Linear)):
+                nn.init.kaiming_normal_(m.weight)
+                if m.bias is not None: nn.init.zeros_(m.bias)
+        
+        model.apply(init); 
+    #---------------------------------------------------------------------------
+
+    @staticmethod
+    def dropout(model, p=0., info=False):
+        """
+        Set dropout rates of DropoutXd to value p. It may be float or list of floats.
+        If there are more such modules than the length of the list p, the last value repeated.
+
+        Example:
+        ----------        
+        Change.dropout(model, 2.0 )
+        Change.dropout(model, [2.0, 3.0] )     
+        """
+        kind = (nn.Dropout, nn.Dropout1d, nn.Dropout2d, nn.Dropout3d)
+        layers = Change.get_layers(model, kind=kind)
+        if layers:
+            if type(p) in (int, float):
+                p = [p]
+
+            for i,layer in enumerate(layers):
+                layer.p = p[ min(i, len(p)-1) ]
+
+                if info:
+                    print(layer)
+        else:
+            if info:
+                print(f"No layers {kind}")
+
+    #---------------------------------------------------------------------------
+
+    @staticmethod
+    def shift(model, std=0., info=False):
+        """
+        Set std in ShiftFeatures. It may be float or list of floats.
+        If there are more such modules than the length of the list std, the last value repeated.
+
+        Example:
+        ----------
+        Change.set_shift(model, 2.0 )
+        Change.set_shift(model, [2.0, 3.0] )
+        """
+        kind = (ShiftFeatures)
+        layers = Change.get_layers(model, kind=kind)
+        if layers:
+            if type(std) in (int, float):
+                std = [std]
+
+            for i,layer in enumerate(layers):
+                layer.std = std[ min(i, len(std)-1) ]
+
+                if info:
+                    print(layer)
+        else:
+            if info:
+                print(f"No layers  {kind}")
+
+    #---------------------------------------------------------------------------
+
+    @staticmethod
+    def get_layers(model, kind):        
+        """Get a list of model layers of type kind
+
+        Example:
+        ----------
+        layers = get_model_layers(model, (nn.Dropout1d, nn.Dropout2d) )
+        """
+        layers = []
+        Change.get_layers_rec(model, kind, layers)
+        return layers
+
+    #---------------------------------------------------------------------------
+
+    @staticmethod
+    def get_layers_rec(model, kind, layers):    
+        for mo in model.children():
+            if isinstance(mo, kind):
+                layers.append(mo)
+            else:                
+                Change.get_layers_rec(mo, kind, layers) 
+

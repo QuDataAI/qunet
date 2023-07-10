@@ -14,6 +14,7 @@ from .modules.cnn3D       import *
 from .modules.transformer import *
 from .modules.points      import *
 from .modules.vit         import *
+from .modules.total       import *
 
 from .optim.scheduler     import *
 from .optim.adams         import Adams

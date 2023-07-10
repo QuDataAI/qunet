@@ -3,7 +3,7 @@ import numpy as np, matplotlib.pyplot as plt
 import torch, torch.nn as nn
 
 from ..config  import Config
-from .total    import get_activation, get_norm, LayerNormChannels
+from .total    import Create, ShiftFeatures
 
 #===============================================================================
 
@@ -16,7 +16,7 @@ class ResidualAlign(nn.Sequential):
         if dim==1: layers = [ nn.Linear(Ein, Eout) ]
         else:      layers = [ nn.Conv2d(Ein, Eout, kernel_size=1, stride=stride, bias=False) ]
 
-        norm = get_norm(Eout, norm,  dim)
+        norm = Create.norm(Eout, norm,  dim)
         if type(norm) != nn.Identity:
             layers.append( norm )        
         super().__init__(*layers)
@@ -26,17 +26,19 @@ class ResidualAlign(nn.Sequential):
 class ResidualAfter(nn.Sequential):
     """
     Нормализация и активация после суммирования skip-connection и блок
-    """
-    def __init__(self, E, norm, dim, fun):
+    """               
+    def __init__(self, E, norm, dim, drop_d, shift, fun):
         layers = []
-        norm = get_norm(E, norm,  dim)
-        if type(norm) != nn.Identity:
-            layers.append( norm )     
-
+        if norm:
+            layers.append( Create.norm(E, norm,  dim) )     
+        if drop_d:
+            layers.append( Create.dropout(drop_d) )
+        if shift:
+            layers.append( ShiftFeatures() )
         if fun:
-            layers.append(get_activation(fun))
+            layers.append(Create.activation(fun))
 
-        super().__init__(*layers)
+        super().__init__(*layers)        
 
 #===============================================================================
 
@@ -60,9 +62,10 @@ class Residual(nn.Module):
     (res==1): gamma = 1; (res==2) gamma - trainable scalar; (res==3) gamma - trainable vector(E)
     ```
     """
-    def __init__(self, block, E, Eout=None, stride=1, res = 1, gamma=0.1, drop=0., dim=1,
-                norm_before=1, norm_after=0, norm_align=0,
-                fun="", name=""):
+    def __init__(self, block, E, Eout=None, stride=1, 
+                res=1, gamma=0.1,
+                norm_before=1, norm_after=0, norm_align=0, 
+                drop_d_after=1, dim=1, shift_after=0, fun_after = "",name=""):
         super().__init__()
         Eout = Eout or E
         self.name = name
@@ -90,13 +93,12 @@ class Residual(nn.Module):
         else:
             self.align = ResidualAlign(E, Eout, stride, norm_align, dim)
 
-        if norm_after or fun:
-            self.after = ResidualAfter(Eout, norm_after, dim, fun)
+        if norm_after or drop_d_after or shift_after or fun_after:
+            self.after = ResidualAfter(Eout, norm_after, dim,  drop_d_after, shift_after, fun_after)
         else:
             self.after = nn.Identity()
 
-        self.p     = 0
-        self.drop  = nn.Dropout2d(drop)  if dim==2 else nn.Dropout(drop)
+        self.p     = 0        
         self.std   = torch.tensor(float(0.))
 
         # для статистической информации:
@@ -182,6 +184,6 @@ class Residual(nn.Module):
             else:
                 x = self.align(x) + self.gamma * self.block( self.norm(x) )
 
-        return self.drop( self.after(x) )
+        return self.after(x) 
 
     #---------------------------------------------------------------------------

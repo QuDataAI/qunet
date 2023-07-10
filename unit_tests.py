@@ -3,7 +3,7 @@ import numpy as np,  matplotlib.pyplot as plt, pandas as pd
 from   tqdm.auto import tqdm
 import torch, torch.nn as nn
 
-from qunet import  ModelState, Trainer, Config, Data, MLP, ResMLP, CNN,  Attention, FFT, TransformerBlock, Transformer, VitEmb, Vit2d, PointsBlock
+from qunet import  ModelState, Trainer, Config, Change, Data, MLP, ResMLP, CNN,  Attention, FFT, TransformerBlock, Transformer, VitEmb, Vit2d, PointsBlock
 
 print(torch.__version__)
 print(torch.cuda.is_available())
@@ -21,22 +21,38 @@ res = res and Transformer.unit_test()
 res = res and VitEmb.unit_test()
 res = res and Vit2d.unit_test()
 res = res and Data.unit_test()
-"""
-m = nn.Sequential(
-    #CNN(input=1, blocks="cnf128 m d cnf256 m d cnf512 m d"),  # тоже что "c32 n f m c64 n f m"    
-    #CNN(input=1, blocks="cnf128_3_2 d cnf256_3_2 d cnf512_3_2  d"),
-    CNN(input=1, blocks="(c64_7_2 n f  m3_2) 2r r128_3_2 r r256_3_2 r r512_3_2 r"), 
-    MLP(input=512, output=10) )
-
-m[0].set_dropout([0.1, 0.2, 0.3])
-
-s = ModelState(m)
-s.layers(2, input_size=(1,1,224,224) )
 
 print("--------------------------")
 print("unit tests result = ", res)
 print("--------------------------")
+"""
+"""
+                                                       ops            pars
+w = 32          16           8           4       2
+blocks = "r128   m    r256   m    r512   m"            624,683    4,742,403        
+blocks = "r128   m r  r256   m r  r512   m"            775,675    6,217,733
+blocks = "r128   m r  r256_3_2 r  r512_3_2"            423,355    6,217,733 <---
+blocks = "r128_3_2 r  r256_3_2 r  r512_3_2"            307,160    6,217,733
 
+blocks = "cnf64 r m  r128_3_2 2r r256_3_2 2r  r512_3_2"  196,798    7,846,856
+              2 74
+""" 
+m = CNN(input=3, blocks="(c64  m) 2r r128_3_2 r r256_3_2 r r512_3_2 r", shift_after=0)
+#m = CNN(input=3, blocks="(cnf64 m)      2r  r128_3_2     r  r256_3_2     r  r512_3_2      r")
+#m = CNN(input=3, blocks="r64 m r128 m r256 m r512 m", flat=False, avg=False)
+
+mlp = MLP(input=512, hidden=100, output=10)
+
+
+Change.dropout(m, [0.1, 0.2, 0.3])
+#Change.shift  (m, [0.1, 0.2, 0.3])
+
+s = ModelState(m)
+s.layers(2, input_size=(1,3,32,32) ) # 
+
+
+s = ModelState(mlp)
+#s.layers(2, input_size=(1,512) ) # 
 
 #from torchvision.models import resnet18
 #model = resnet18()
