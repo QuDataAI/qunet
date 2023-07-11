@@ -152,7 +152,7 @@ class Residual(nn.Module):
     #---------------------------------------------------------------------------
 
     def forward(self, x):                      # (B,T,E) or (B,E,H,W)
-        if self.p and self.p > torch.rand(1):
+        if self.p and self.p > torch.rand(1) and  type(self.align) is nn.Identity:
             return x                           # skip block (!)
 
         if self.debug_state:

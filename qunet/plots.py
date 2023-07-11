@@ -198,13 +198,14 @@ def plot_smooth_line(ax=None, x=[],y=[], color="black", label="", count=200, win
         x, y = x[:min(len(x),len(y))], y[:min(len(x),len(y))]
 
     lw = 1.5 if len(x) < 100 else (1 if len(x) < 200 else 0.5)        
-    if len(x) <  count:
+    if len(x) < count or len(x) < 2*win :
         ax.plot(x, y, color, linewidth=lw, label=label, alpha=dalpha)
     else:
         if alpha > 0:
             ax.plot(x, y, color, linewidth=lw, alpha=alpha*dalpha)
-
-        avg_y = savgol_filter(y, win, power)
+        
+        avg_y = savgol_filter(y[win:], win, power)
+        avg_y = np.hstack( [y[:win], avg_y] )
         ax.plot(x, avg_y, color, linewidth=width, label=label, alpha=dalpha)    
         i = np.argmax(avg_y) if best_max else np.argmin(avg_y)
         ax.scatter(x[i], avg_y[i], facecolors='none', edgecolors=color, alpha=dalpha)

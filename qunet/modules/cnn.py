@@ -30,7 +30,7 @@ class ConvBlock(nn.Sequential):
 
 class ResidualConvBlock(nn.Sequential):
     def __init__(self, in_channels, out_channels, kernel_size=3,  bias=False, stride=1, stride_first=True,
-                drop_d=0, shift=0, norm=1, num=2,  fun="relu"):
+                drop_d=0, shift=0, norm=1, norm_last=1, num=2,  fun="relu"):
         """
         shape and channels will not change
         """
@@ -46,17 +46,18 @@ class ResidualConvBlock(nn.Sequential):
             layers.append(nn.Conv2d(in_channels, out_channels, kernel_size, stride=s, padding=padding, bias=bias) )
             in_channels = out_channels
 
-            norm = Create.norm(out_channels, norm, 2)
-            if type(norm) != nn.Identity:
-                layers.append(  norm )
-
             if i+1 < num:
+                if norm:             
+                    layers.append( Create.norm(out_channels, norm, 2) )
                 if fun:
                     layers.append( Create.activation(fun) )
                 if drop_d:
                     layers.append( Create.dropout(drop_d) )
                 if shift:
                     layers.append( ShiftFeatures() )
+
+        if norm_last:
+            layers.append( Create.norm(out_channels, norm_last, 2) )
 
         super().__init__(*layers)
 
@@ -127,7 +128,11 @@ class CNN(nn.Module):
             shift_after   = 0,      # добавлять ShiftFeatires после блоков ('r')
 
             norm   = 1,             # тип нормировки для токенов 'n'
-            norm_inside   = 1,      # тип нормировки внутри блоков между Conv2d
+
+            norm_before   = 0,      # тип нормировки перед блоком block(x)
+            norm_inside   = 1,      # тип нормировки внутри блока block(x) между Conv2d
+            norm_last     = 1,      # тип нормировки внутри блока block(x) после последнего Conv2d
+            norm_align    = 1,      # тип нормировки внутри блока align(x) после Conv2d
             norm_after    = 0,      # добавлять нормировку после блоков ('r')
             
             fun           = 'relu', # активационная функция для токена `f`
@@ -170,9 +175,13 @@ class CNN(nn.Module):
             i += 1
 
         if cfg.avg:
-            all_blocks.append( nn.AdaptiveAvgPool2d(1) )
+            block = nn.AdaptiveAvgPool2d(1)
+            block.name = 'avg'
+            all_blocks.append( block )
         if cfg.flat:
-            all_blocks.append( nn.Flatten() )
+            block = nn.Flatten()
+            block.name = 'flat'
+            all_blocks.append( block )
 
         self.blocks = nn.ModuleList(all_blocks)
 
@@ -276,10 +285,10 @@ class CNN(nn.Module):
             stride = int(parts[2]) if len(parts) > 2 else 1
 
             block= Residual(
-                    ResidualConvBlock(channels, Eout, kernel_size=kern, stride=stride, stride_first=cfg.stride_first, bias=cfg.bias, norm=cfg.norm_inside, fun=cfg.fun_inside, drop_d=cfg.drop_d_inside, shift=cfg.shift_inside),
+                    ResidualConvBlock(channels, Eout, kernel_size=kern, stride=stride, stride_first=cfg.stride_first, bias=cfg.bias, norm=cfg.norm_inside, norm_last=cfg.norm_last, fun=cfg.fun_inside, drop_d=cfg.drop_d_inside, shift=cfg.shift_inside),
                     E=channels, Eout=Eout, res = cfg.res, gamma=cfg.gamma, stride=stride,
-                    norm_before=0,    # подстраиваемся под resnetXX
-                    norm_align = 0 if channels==Eout else cfg.norm,
+                    norm_before= cfg.norm_before,    # для resnetXX 0
+                    norm_align = 0 if (channels==Eout and stride==1) else cfg.norm_align,
                     drop_d_after = cfg.drop_d_after, dim=2, shift_after=cfg.shift_after,
                     norm_after = cfg.norm_after, fun_after = cfg.fun_after,
                     name=token )
@@ -292,7 +301,7 @@ class CNN(nn.Module):
             kern   = int(parts[1]) if len(parts) > 1 else 3
             stride = int(parts[2]) if len(parts) > 2 else 1
 
-            block = ResidualConvBlock(channels, Eout, kernel_size=kern, stride=stride, stride_first=cfg.stride_first, bias=cfg.bias, norm=cfg.norm_inside, fun=cfg.fun, drop_d=cfg.drop_d_inside, shift=cfg.shift_inside)
+            block = ResidualConvBlock(channels, Eout, kernel_size=kern, stride=stride, stride_first=cfg.stride_first, bias=cfg.bias, norm=cfg.norm_inside, norm_last=cfg.norm_last, fun=cfg.fun, drop_d=cfg.drop_d_inside, shift=cfg.shift_inside)
             block.name = token
             channels = Eout
             return [block], channels
@@ -377,11 +386,14 @@ class CNN(nn.Module):
         """
         cfg = CNN.default()
         cfg(
-            input    = 3,
-            blocks   = "(cnf64_7_2 m3_2) 2r r128_3_2 r r256_3_2 r r512_3_2 r",
-            norm     = 1,
-            fun      = 'relu',
-            res      = 1,            
+            input       = 3,
+            blocks      = "(cnf64_7_2 m3_2_1) 2r r128_3_2 r r256_3_2 r r512_3_2 r",
+            norm_before = 0,
+            norm_inside = 1,            
+            norm_last   = 1,
+            norm_after  = 0,
+            fun         = 'relu',
+            res         = 1,            
         )
         return cfg
 
@@ -400,35 +412,40 @@ class CNN(nn.Module):
     #---------------------------------------------------------------------------
 
     def plot(self, w=12, h=3, eps=1e-8, bar_width = 0.75, info=False):
-        blocks = self.blocks
-        idx = np.arange(len(blocks))
-
+        blocks = self.blocks        
         fig, ax = plt.subplots(1,1, figsize=(w, h))
 
-        ax.grid(ls=":")
-        ax.set_xticks(idx)
-        ax.set_ylabel("dx/x");  ax.set_xlabel("blocks");
+        idx    = np.arange( len(blocks) )
+        xticks = [ block.name if hasattr(block, 'name') else i  for i, block in enumerate(blocks) ]
+        plt.xticks(idx, xticks)        
+        ax.grid(ls=":")    
+        ax.set_ylabel("dx/x");  # ax.set_xlabel("blocks");
+        
+        plt.text(0,0,f" std\n", ha='left', transform = ax.transAxes, fontsize=6, family="monospace")
 
-        plt.text(0,0,f" std\n\n", ha='left', transform = ax.transAxes, fontsize=6, family="monospace")
-
-        idx_res, res =  [], []
+        idx_res, res, idx_res0, res0 =  [], [], [], []
         for i,block in enumerate(blocks):
             if hasattr(block, 'sqr_dx') and block.sqr_dx is not None and block.sqr_x is not None:
                 dx = (block.sqr_dx / (block.sqr_x+eps)).sqrt().cpu().item()
                 idx_res.append( i )
                 res.append( dx )
+            else:
+                idx_res0.append( i )
+                res0.append( 0 )
         if res:
             ax.set_ylim(bottom=0, top=1.1*np.max(res))
             ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%0.3f'))
             ax.bar(idx_res, res, width = bar_width, edgecolor ='grey', alpha=0.5)
+        if res0:            
+            ax.bar(idx_res0, res0, width = bar_width, edgecolor ='grey', alpha=0.5)
 
-        names = [''] * len(blocks)
         ymin, ymax = ax.get_ylim()
+        names = [''] * len(blocks)    
         for i,block in enumerate(blocks):
             if hasattr(block, 'name'):
                 names[i] = block.name
                 st = f"{block.std.cpu().item():.1f}" if hasattr(block, 'std') else ""
-                plt.text(i, ymin, f"{st}\n{block.name}\n", ha='center', fontsize=6, family="monospace")
+                plt.text(i, ymin, f"{st}\n", ha='center', fontsize=6, family="monospace")
 
         ax2 = ax.twinx()
         idx_gamma_d, gamma_d = [], []
@@ -452,7 +469,7 @@ class CNN(nn.Module):
             ax3.plot(idx_gamma_g, gamma_g, ":", marker=".")
         ax3.set_ylabel("gamma grad")
         ax3.spines["right"].set_position(("outward", 50))
-
+        
         plt.show()
 
         if info:

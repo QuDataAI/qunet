@@ -37,21 +37,19 @@ blocks = "r128_3_2 r  r256_3_2 r  r512_3_2"            307,160    6,217,733
 blocks = "cnf64 r m  r128_3_2 2r r256_3_2 2r  r512_3_2"  196,798    7,846,856
               2 74
 """ 
-m = CNN(input=3, blocks="(c64  m) 2r r128_3_2 r r256_3_2 r r512_3_2 r", shift_after=0)
-#m = CNN(input=3, blocks="(cnf64 m)      2r  r128_3_2     r  r256_3_2     r  r512_3_2      r")
-#m = CNN(input=3, blocks="r64 m r128 m r256 m r512 m", flat=False, avg=False)
+#m = CNN(input=3, blocks="(c64  m) 2r r128_3_2 r r256_3_2 r r512_3_2 r", shift_after=0)
+m = CNN(input=3, blocks="(cnf64 m)      2r  r128_3_2     r  r256_3_2     r  r512_3_2      r")
+#m = CNN(input=3, blocks="r64 m r r128 m r r256 m r r512 m", flat=False, avg=False)
 
-mlp = MLP(input=512, hidden=100, output=10)
-
-
-Change.dropout(m, [0.1, 0.2, 0.3])
+#mlp = MLP(input=512, hidden=100, output=10)
+#Change.dropout(m, [0.1, 0.2, 0.3])
 #Change.shift  (m, [0.1, 0.2, 0.3])
 
-s = ModelState(m)
-s.layers(2, input_size=(1,3,32,32) ) # 
+#s = ModelState(m)
+#s.layers(2, input_size=(1,3,32,32) ) # 
 
 
-s = ModelState(mlp)
+#s = ModelState(mlp)
 #s.layers(2, input_size=(1,512) ) # 
 
 #from torchvision.models import resnet18
@@ -59,17 +57,9 @@ s = ModelState(mlp)
 #state = ModelState(model)
 #state.layers(2, input_size=(1,3,224,224))
 
-
-"""
-cfg = Config(E=64, H=4, n_blocks=1, is_fft=0, is_att=1, res=2, gamma=0.2)
-model = Transformer(cfg)
-state = ModelState(model)
-
-model.debug()
-y = model(torch.randn(1,10,64))
+m.debug()
+y = m(torch.randn(1,3,32,32))
 (y*y).mean().backward()
-model.update()
+m.update()
 
-model.set_drop(0.1,0.0,0.3)
-state.layers()
-"""
+m.plot()

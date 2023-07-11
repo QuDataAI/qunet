@@ -814,20 +814,25 @@ class Trainer:
         trn_score_bst, trn_score_epo, val_score_bst, val_score_epo = 0, 0, 0, 0
 
         # best smoothing metrics
-        if len(self.hist.trn.losses) > self.view.smooth.win:
-            smooth = savgol_filter(self.hist.trn.losses, self.view.smooth.win, self.view.smooth.power)        
+        win, power = self.view.smooth.win, self.view.smooth.power
+        if len(self.hist.trn.losses) > 2*win:    
+            smooth = savgol_filter(self.hist.trn.losses[win:], win, power)        
+            smooth = np.hstack( [self.hist.trn.losses[:win], smooth] )
             trn_loss_epo = np.argmin(smooth)
             trn_loss_bst = smooth[trn_loss_epo]        
-        if len(self.hist.val.losses) > self.view.smooth.win:
-            smooth = savgol_filter(self.hist.val.losses, self.view.smooth.win, self.view.smooth.power)        
+        if len(self.hist.val.losses) > 2*win:
+            smooth = savgol_filter(self.hist.val.losses[win:], win, power)        
+            smooth = np.hstack( [self.hist.val.losses[:win], smooth] )
             val_loss_epo = np.argmin(smooth)
             val_loss_bst = smooth[val_loss_epo]
-        if len(self.hist.trn.scores) > self.view.smooth.win:
-            smooth = savgol_filter(self.hist.trn.scores, self.view.smooth.win, self.view.smooth.power)        
+        if len(self.hist.trn.scores) > 2*win:
+            smooth = savgol_filter(self.hist.trn.scores[win:], win, power)  
+            smooth = np.hstack( [self.hist.trn.scores[:win], smooth] )      
             trn_score_epo = np.argmax(smooth) if self.score_max else np.argmin(smooth)
             trn_score_bst = smooth[trn_score_epo]        
-        if len(self.hist.val.scores) > self.view.smooth.win:
-            smooth = savgol_filter(self.hist.val.scores, self.view.smooth.win, self.view.smooth.power)        
+        if len(self.hist.val.scores) > 2*win:
+            smooth = savgol_filter(self.hist.val.scores[win:], win, power)        
+            smooth = np.hstack( [self.hist.val.scores[:win], smooth] )      
             val_score_epo = np.argmax(smooth) if self.score_max else np.argmin(smooth)
             val_score_bst = smooth[val_score_epo]
 
