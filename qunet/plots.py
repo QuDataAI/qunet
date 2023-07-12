@@ -29,24 +29,39 @@ def plot_histogram( x, x_sub=None, pref="", digits=1, w=12, h=3, bins=50, bins_s
         plt.show()
 
 
-#---------------------------------------------------------------------------
-
+# ===============================================================================
 def plot_history(hist, view, fname="", score_max=True, compare=None):
     """
-    """    
+    """
     samples, steps             = hist.samples, hist.steps
     if samples == 0:
         print("plot_history warning: empty history")
         return
     val, trn, labels = hist.val, hist.trn, hist.labels
-    
+
     t_unit = view.units.time  if  view.units.time in ['ms','s','m','h']  else 's'
     t_unit_scale = dict(ms=1e-3, s=1, m=60, h=3600)[t_unit]
     c_unit = view.units.count if view.units.count > 0  else 1
     c_unit_power = round(np.log10(c_unit), 0)
-            
-    plt.figure(figsize=(view.w,  view.h), facecolor ='w')
-    
+
+    # select grid
+    plots = 0
+    if view.loss.show:
+        plots += 1
+    for score_name in hist.trn.scores:
+        # если конфигурация не указана, копируем ее из view.score
+        if not view.get(score_name):
+            view.set(**{score_name:view.score.copy()})
+        if not view.get(score_name).show:
+            continue
+        plots += 1
+
+    maxcols = 2
+    nrows = int(math.ceil(plots / maxcols))
+    ncols = maxcols if plots > 1 else 1
+
+    plt.figure(figsize=(view.w,  view.h*nrows), facecolor ='w')
+
     lr     = f"{trn.lr[-1]:.1e}" if len(trn.lr) else '?'
     bs_trn = f"{trn.batch_size[-1]}" if len(trn.batch_size) else '?'
     bs_val = f"{val.batch_size[-1]}" if len(val.batch_size) else '?'
@@ -55,27 +70,25 @@ def plot_history(hist, view, fname="", score_max=True, compare=None):
 
     plt.suptitle(fr"samples={samples}, steps:{steps}; lr={lr}; batch=(trn:{bs_trn}, val:{bs_val}); time=(trn:{tm_trn}, val:{tm_val}){t_unit}/$10^{c_unit_power:.0f}$; params={hist.params/1e3:.0f}k", fontsize = 10)
 
-    if  not view.loss.show:
-        ax1, ax2 = subplot_history(111, val, trn, view=view.score, view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='score', best_max=score_max)
-        if compare is not None:
-            for hist in compare.hist:
-                subplot_history(111, hist.val, hist.trn, view=view.score,  view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='score', best_max=False, ax1=ax1, ax2=ax2, alpha=compare.alpha, show_trn=compare.trn, show_val=compare.val)          
+    index = 1
 
-    elif not view.score.show or (len(hist.trn.scores)==0 and len(hist.val.scores)==0):
-        ax1, ax2 = subplot_history(111, val, trn, view=view.loss,  view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='loss', best_max=False)
+    if view.loss.show:
+        # plot loss
+        ax1, ax2 = subplot_history(nrows, ncols, index, val, trn, view=view.loss,  view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='loss', best_max=False)
         if compare is not None:
             for hist in compare.hist:
-                subplot_history(111, hist.val, hist.trn, view=view.loss,  view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='loss', best_max=False, ax1=ax1, ax2=ax2, alpha=compare.alpha, show_trn=compare.trn, show_val=compare.val)            
-    else:
-        ax1, ax2 = subplot_history(121, val, trn, view=view.loss,  view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='loss', best_max=False)            
-        if compare is not None:
-            for hist in compare.hist:
-                subplot_history(121, hist.val, hist.trn, view=view.loss,  view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='loss', best_max=False, ax1=ax1, ax2=ax2, alpha=compare.alpha, show_trn=compare.trn, show_val=compare.val)            
+                subplot_history(nrows, ncols, index, hist.val, hist.trn, view=view.loss,  view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='loss', best_max=False, ax1=ax1, ax2=ax2, alpha=compare.alpha, show_trn=compare.trn, show_val=compare.val)
+        index += 1
 
-        ax1, ax2 = subplot_history(122, val, trn, view=view.score, view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='score', best_max=score_max)        
+    for score_name in hist.trn.scores:
+        # plot scores
+        if not view.get(score_name).show:
+            continue
+        ax1, ax2 = subplot_history(nrows, ncols, index, val, trn, view=view.get(score_name), view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='score', score_name=score_name, best_max=score_max)
         if compare is not None:
             for hist in compare.hist:
-                subplot_history(122, hist.val, hist.trn, view=view.score,  view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='score', best_max=False, ax1=ax1, ax2=ax2, alpha=compare.alpha, show_trn=compare.trn, show_val=compare.val)            
+                subplot_history(nrows, ncols, index, hist.val, hist.trn, view=view.get(score_name),  view_tot=view, c_unit=c_unit, c_unit_power=c_unit_power, unit=view.units.unit, labels=labels, kind='score', score_name=score_name, best_max=False, ax1=ax1, ax2=ax2, alpha=compare.alpha, show_trn=compare.trn, show_val=compare.val)
+        index += 1
 
     if fname:
         plt.savefig(fname, bbox_inches='tight')
@@ -84,10 +97,10 @@ def plot_history(hist, view, fname="", score_max=True, compare=None):
 
 #===============================================================================
 
-def subplot_history(sub, val, trn, view, view_tot, c_unit, c_unit_power, unit, labels, kind, best_max, ax1=None, ax2=None, alpha=1.0, show_trn=True, show_val=True):                
+def subplot_history(nrows, ncols, index, val, trn, view, view_tot, c_unit, c_unit_power, unit, labels, kind, best_max, score_name=None, ax1=None, ax2=None, alpha=1.0, show_trn=True, show_val=True):
     first = ax1 is  None
     if ax1 is None:
-        ax1 = plt.subplot(sub); ax1.grid(ls=':')                           
+        ax1 = plt.subplot(nrows, ncols, index); ax1.grid(ls=':')
         if len(val.samples) > 0 and len(trn.samples) > 0:        
             if unit == 'samples':
                 x_max = max(val.samples[-1], trn.samples[-1]) if view_tot.x_max is None else view_tot.x_max        
@@ -104,17 +117,21 @@ def subplot_history(sub, val, trn, view, view_tot, c_unit, c_unit_power, unit, l
             loss_val_av = f"{np.mean(val.losses[-30:]):.3f}"   if len(val.losses)  else "?"
             plt.title(f"min: {best_loss} [{val.best.loss_epochs}], val: {loss_val_av}({loss_val}), trn: {loss_trn_av}({loss_trn})", fontsize=10, pad=-2)
 
-        if kind == 'score':        
-            best_score = f"{val.best.score:.4f}"   if val.best.score is not None else "?"
-            score_val  = f"{val.scores[-1]:.4f}"   if len(val.scores) else "?"
-            score_trn  = f"{trn.scores[-1]:.4f}"   if len(trn.scores) else "?"
-            score_trn_av = f"{np.mean(trn.scores[-30:]):.3f}"   if len(trn.losses)  else "?"
-            score_val_av = f"{np.mean(val.scores[-30:]):.3f}"   if len(val.losses)  else "?"
+        if kind == 'score':
+            trn_scores_is = score_name in trn.scores and len(trn.scores[score_name])
+            val_scores_is = score_name in val.scores and len(val.scores[score_name])
 
-            plt.title(f"bst: {best_score} [{val.best.score_epochs}], val: {score_val_av}({score_val}),  trn:  {score_trn_av}({score_trn})", fontsize=10, pad=-2)
+            best_score = f"{val.best.scores[score_name].score:.4f}" if (score_name in val.best.scores and val.best.scores[score_name].score is not None) else "?"
+            score_trn  = f"{trn.scores[score_name][-1]:.4f}" if trn_scores_is else "?"
+            score_val  = f"{val.scores[score_name][-1]:.4f}" if val_scores_is else "?"
+            score_trn_av = f"{np.mean(trn.scores[score_name][-30:]):.3f}"   if trn_scores_is  else "?"
+            score_val_av = f"{np.mean(val.scores[score_name][-30:]):.3f}"   if val_scores_is  else "?"
+
+            plt.title(f"bst: {best_score} [{val.best.scores[score_name].epochs}], val: {score_val_av}({score_val}),  trn:  {score_trn_av}({score_trn})", fontsize=10, pad=-2)
 
         y_min, y_max = view.y_min, view.y_max
-        ax1.set_xlabel(fr"$10^{c_unit_power:.0f}$ samples" if unit=='samples' else 'epochs'); ax1.set_ylabel(kind);                     
+        y_label = kind if kind=='loss' else score_name
+        ax1.set_xlabel(fr"$10^{c_unit_power:.0f}$ samples" if unit=='samples' else 'epochs'); ax1.set_ylabel(y_label);
         if y_min is not None  and y_max is not None:            
             ax1.set_ylim(y_min, y_max)
             if view.ticks:
@@ -134,19 +151,21 @@ def subplot_history(sub, val, trn, view, view_tot, c_unit, c_unit_power, unit, l
 
     if len(trn.samples) and show_trn:                      # trn
         x = np.array(trn.samples)/c_unit if unit=='sample' else np.array(trn.epochs)
-        y = trn.losses if kind=='loss' else trn.scores    
-        plot_smooth_line(ax1, x,y, 'darkblue', label=kind+'_trn', best_max=best_max, **view_tot.smooth.get_dict(), dalpha=alpha)            
+        y = trn.losses if kind=='loss' else trn.scores[score_name]
+        label = kind if kind=='loss' else score_name
+        plot_smooth_line(ax1, x,y, 'darkblue', label=label+'_trn', best_max=best_max, **view_tot.smooth.get_dict(), dalpha=alpha)
 
     if len(val.samples) and show_val:                      # val
         x = np.array(val.samples)/c_unit if unit=='sample' else np.array(val.epochs)
-        y = val.losses if kind=='loss' else val.scores        
-        plot_smooth_line(ax1, x,y, 'g', label=kind+'_val', best_max=best_max, **view_tot.smooth.get_dict(), dalpha=alpha)
+        y = val.losses if kind=='loss' else val.scores[score_name]
+        label = kind if kind == 'loss' else score_name
+        plot_smooth_line(ax1, x,y, 'g', label=label+'_val', best_max=best_max, **view_tot.smooth.get_dict(), dalpha=alpha)
 
     if first:
         ax1.legend(loc='upper left', frameon = False)
         ax1.tick_params(axis='y', colors='darkgreen')
 
-        checks = trn.best.losses if kind=='loss' else trn.best.scores
+        checks = trn.best.losses if kind=='loss' else trn.best.scores[score_name].scores
         if view.trn_checks:        
             if view.last_checks > 0:
                 checks = checks[-view.last_checks :]
@@ -154,7 +173,7 @@ def subplot_history(sub, val, trn, view, view_tot, c_unit, c_unit_power, unit, l
                 x = c[2]/c_unit if unit=='sample' else c[1]               
                 ax1.scatter(x, c[0],  s=3, c='darkblue', edgecolors='black', linewidths=0.5, alpha=alpha)                                
 
-        checks = val.best.losses if kind=='loss' else val.best.scores
+        checks = val.best.losses if kind=='loss' else val.best.scores[score_name].scores
         if view.val_checks:        
             if view.last_checks > 0:
                 checks = checks[-view.last_checks :]
@@ -184,9 +203,8 @@ def subplot_history(sub, val, trn, view, view_tot, c_unit, c_unit_power, unit, l
         if first:
             ax2.legend(['lr'], loc='upper right', frameon = False)
             ax2.tick_params(axis='y', colors='darkred')
-            if sub == 121:
-                ax2.set_yticklabels([])   
-                ax2.minorticks_off() # for log scale         
+            #ax2.set_yticklabels([])
+            #ax2.minorticks_off() # for log scale
 
 
     return ax1, ax2

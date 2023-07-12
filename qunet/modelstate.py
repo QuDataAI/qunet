@@ -207,8 +207,11 @@ class ModelState:
         def t2s(t):
             if type(t) == int:
                 return str(t)
-            if (type(t) == tuple and len(t)==2 and t[0]==t[1]):
+            if type(t) == tuple and len(t)==2 and t[0]==t[1]:
                 return str(t[0])        
+            if type(t) == tuple and len(t)==1:
+                return str(t[0])        
+            
             st = "("
             for i,v in enumerate(t): st += str(v) + ("," if i+1 < len(t) else "")
             return st + ")"
@@ -245,7 +248,7 @@ class ModelState:
                 elif layer in ["BatchNorm1d","BatchNorm2d","BatchNorm3d"]: 
                     descr += f"({mo.num_features})"                    
                 elif layer == "LayerNorm": 
-                    descr += f"({mo.normalized_shape})"                    
+                    descr += f"({t2s(mo.normalized_shape)})"                    
                 elif layer in ["Conv1d","Conv2d","Conv3d"]: 
                     if info == 1:  descr += f"({mo.in_channels}->{mo.out_channels})"
                     elif info > 1: descr += f"({mo.in_channels}->{mo.out_channels}, k:{t2s(mo.kernel_size)}, s:{t2s(mo.stride)}, p:{t2s(mo.padding)}, {'T' if mo.bias is not None else 'F'})"                    
@@ -264,6 +267,8 @@ class ModelState:
                     elif info > 1: descr += f"({mo.input_size},{mo.hidden_size}, l:{mo.num_layers}, bi:{'T' if mo.bidirectional else 'F'})"
                 elif layer in ["AdaptiveAvgPool1d", "AdaptiveAvgPool2d"]: 
                     descr += f"({mo.output_size})"
+                elif layer in ["Scaler"]:
+                    descr += f"({mo.kind})"
                 elif layer in ['ReLU', 'GELU', 'Sigmoid', 'Tanh', 'ReLU6' ]: 
                     #if lr['input']:                        
                     #    ops = np.prod(lr['input'])
@@ -319,8 +324,8 @@ class ModelState:
             if input_size is not None or  input_data is not None:
                 shapes  = str(lr['input'])  +' '*(inp_w-len(str(lr['input']))) + ' -> '
                 shapes += str(lr['output']) +' '*(out_w-len(str(lr['output'])))
-                if len(lr['input']) and len(lr['output']):
-                    shapes += f"[{np.prod(lr['input'])/np.prod(lr['output']):.2f}]"
+                #if len(lr['input']) and len(lr['output']):
+                #    shapes += f"[{np.prod(lr['input'])/np.prod(lr['output']):.2f}]"
                 data = ""
 
             tot_ops += lr['ops'] if lr['ops'] is not None else 0
@@ -349,14 +354,14 @@ class ModelState:
                 prs  = 100*num/total_num
                 data = f"{(self.sum_values(lr['params'], kind='data') / num)**0.5:5.3f}"
                 num_st  = ModelState.i2s(num)
-                prs_st  = f"~ {prs:3.0f}%" if prs > 0.5 else " "*6
+                prs_st  = f"~ {prs:2.0f}%" if prs > 0.5 else " "*5
 
                 if input_size is not None or  input_data is not None:
                     data = ""
 
                 print(f"{lr['st']+' '*(ma-len(lr['st']))}  {num_st}  {prs_st} | {data} {shapes} {ops if is_input else ''} {'' if is_input else name}")
             else:
-                w = 19 if  input_size is not None or  input_data is not None else 24
+                w = 18 if  input_size is not None or  input_data is not None else 23
                 print(f"{lr['st']+' '*(ma-len(lr['st']))} {' '*w}    {shapes} {ops if is_input else ''} {'' if is_input else name}")
 
         print("="*(ma+12))

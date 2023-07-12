@@ -3,54 +3,57 @@ import numpy as np, matplotlib.pyplot as plt
 import torch, torch.nn as nn
 
 from ..config  import Config
-from .total    import Create, ShiftFeatures
+from .total    import Create, ShiftFeatures, Scaler
 
 #===============================================================================
 
-class ResidualAlign(nn.Sequential):
+class SkipConnection(nn.Sequential):
     """
     Выравниваем вход и выход блока, если из размерности отличаются
     """
-    def __init__(self, Ein, Eout, stride, norm, dim):
+    def __init__(self, Ein, Eout, norm, stride=1, dim=1):                
+        layers = []
+        if Ein != Eout or stride > 1:
+            assert dim in [1,2], f"Wrong dim={dim} in SkipConnection  {Ein}->{Eout}, stride={stride}"
 
-        if dim==1: layers = [ nn.Linear(Ein, Eout) ]
-        else:      layers = [ nn.Conv2d(Ein, Eout, kernel_size=1, stride=stride, bias=False) ]
+            if   dim==1: layers.append( nn.Linear(Ein, Eout, bias=False) )
+            elif dim==2: layers.append( nn.Conv2d(Ein, Eout, kernel_size=1, stride=stride, bias=False) )
 
-        norm = Create.norm(Eout, norm,  dim)
-        if type(norm) != nn.Identity:
-            layers.append( norm )        
+            if norm:
+                layers.append( Create.norm(Eout, norm,  dim) )
+        
         super().__init__(*layers)
-
 #===============================================================================
 
-class ResidualAfter(nn.Sequential):
+class AfterResidual (nn.Sequential):
     """
     Нормализация и активация после суммирования skip-connection и блок
     """               
-    def __init__(self, E, norm, dim, drop_d, shift, fun):
+    def __init__(self, E, norm, dim, drop, shift, fun):
+        
         layers = []
         if norm:
             layers.append( Create.norm(E, norm,  dim) )     
-        if drop_d:
-            layers.append( Create.dropout(drop_d) )
+        if drop:
+            layers.append( Create.dropout(drop) )
         if shift:
             layers.append( ShiftFeatures() )
         if fun:
-            layers.append(Create.activation(fun))
+            layers.append(Create.activation(fun))                
 
-        super().__init__(*layers)        
+        super().__init__(*layers)
 
 #===============================================================================
 
 class Residual(nn.Module):
     """Residual block:
     ```
-      ┌─────────────── align(x) ───────────────┐
-      │                                        │
-      │                                        │
-    ──┴─╳── norm(x) ── block(x) ── * ── * ──── + ── norm(x) ── fun(x) ── drop(x) ──
-        │                          │    │
-      with p drop block        gamma    1+std*randn()   may be missing
+     ┌─────────────── align(x) ── n(x) ───────┐
+     │                                        │
+     │                                        │
+    ─┴─╳── norm(x) ── block(x) ── n(x) ─ * ── * ──── + ── n(x) ── f(x) ── drop(x) ──
+       │                                 │      │
+      with p drop block              scale      1+std*randn() 
 
     if dim==1: x.shape=(B,T,E)    for transformer, 1d vit
     if dim==2: x.shape=(B,E,H,W)  for 2d vit, ResidualCNN (E=channels)
@@ -59,43 +62,26 @@ class Residual(nn.Module):
              = Linear(E_in, E_out)            if y.shape != x.shape and dim==1
              = Conv2d(E_in, E_out, kernel=1)  if y.shape != x.shape and dim==2
 
-    (res==1): gamma = 1; (res==2) gamma - trainable scalar; (res==3) gamma - trainable vector(E)
+    (mult=0): нет; (mult=1) scale - trainable scalar; (mult=2) scale - trainable vector(E)
     ```
     """
     def __init__(self, block, E, Eout=None, stride=1, 
-                res=1, gamma=0.1,
-                norm_before=1, norm_after=0, norm_align=0, 
-                drop_d_after=1, dim=1, shift_after=0, fun_after = "",name=""):
+                mult=0, scale=1.,
+                norm_before=1, norm_after=0, norm_align=0, norm_block=0,
+                drop_after=1, dim=1, shift_after=0, fun_after = "",name=""):
         super().__init__()
         Eout = Eout or E
         self.name = name
-
-        if   norm_before == 1:
-            self.norm  = nn.BatchNorm2d(E)    if dim==2 else nn.BatchNorm1d(E)
-        elif norm_before == 2:
-            self.norm  = nn.InstanceNorm2d(E) if dim==2 else nn.LayerNorm (E)
-        else:
-            self.norm  = nn.Identity()
-
+        
+        self.norm_before = Create.norm(E,    norm_before,  dim)        
         self.block = block
-        if   res == 3:                # training multiplier for each components
-            if dim==2:
-                self.gamma = nn.Parameter( torch.empty(1, E, 1,1).fill_(float(gamma)) )
-            else:
-                self.gamma = nn.Parameter( torch.empty(1, 1, E ).fill_(float(gamma)) )
-        elif res == 2:                # training common multiplier
-            self.gamma = nn.Parameter( torch.tensor(float(gamma)) )     # 0 ??? Julius Ruseckas
-        else:                         # constant multiplayer
-            self.register_buffer("gamma", torch.tensor(float(res)) )  # 1 or ...
+        self.norm_block  = Create.norm(Eout, norm_block,   dim)
 
-        if Eout == E and stride==1:
-            self.align = nn.Identity()
-        else:
-            self.align = ResidualAlign(E, Eout, stride, norm_align, dim)
+        self.scaler = Scaler(kind=mult, value=scale, dim=dim, E=E) if mult else nn.Identity()
 
-        if norm_after or drop_d_after or shift_after or fun_after:
-            self.after = ResidualAfter(Eout, norm_after, dim,  drop_d_after, shift_after, fun_after)
-        else:
+        self.align = SkipConnection (E, Eout, norm_align, stride, dim)        
+        self.after = AfterResidual (Eout, norm_after, dim,  drop_after, shift_after, fun_after)
+        if len(self.after) == 0:
             self.after = nn.Identity()
 
         self.p     = 0        
@@ -118,13 +104,16 @@ class Residual(nn.Module):
         if hasattr(self.block, 'update'):
             self.block.update()
 
+        if type(self.scaler) is nn.Identity or self.scaler.scale is None:
+            return
+        
         b, b1 = self.beta, 1-self.beta
-        d = self.gamma.detach().square().mean()  # усредняем gammma**2 и её градиент**2
+        d = self.scaler.scale.detach().square().mean()  # усредняем gammma**2 и её градиент**2
         if self.gamma_d is None: self.gamma_d = d
         else:                    self.gamma_d = b * self.gamma_d + b1 * d
 
-        if self.gamma.requires_grad and self.gamma.grad is not None:
-            g = self.gamma.grad.square().mean()
+        if self.scaler.scale.requires_grad and self.scaler.scale.grad is not None:
+            g = self.scaler.scale.grad.square().mean()
             if self.gamma_g is None: self.gamma_g = g
             else:                    self.gamma_g = b * self.gamma_g + b1 * g
 
@@ -156,7 +145,7 @@ class Residual(nn.Module):
             return x                           # skip block (!)
 
         if self.debug_state:
-            dx = self.gamma * self.block( self.norm(x) )
+            dx = self.scaler ( self.norm_block( self.block( self.norm_before(x) ) ) )
             x  = self.align(x)
 
             v_x  = x. detach().square().sum(self.index).mean()
@@ -178,11 +167,11 @@ class Residual(nn.Module):
         else:
             if self.std > 0:
                 if self.index < 0:
-                    x = self.align(x) + self.gamma * self.block( self.norm(x) ) * (1+torch.randn((x.size(0),x.size(1),1), device=x.device)*self.std)
+                    x = self.align(x) + self.scaler ( self.norm_block( self.block( self.norm_before(x) ) ) ) * (1+torch.randn((x.size(0),x.size(1),1), device=x.device)*self.std)
                 else:
                     x = x + dx * (1+torch.randn((x.size(0), 1, x.size(2), x.size(3)), device=x.device)*self.std)
             else:
-                x = self.align(x) + self.gamma * self.block( self.norm(x) )
+                x = self.align(x) + self.scaler ( self.norm_block( self.block( self.norm_before(x) ) ) )
 
         return self.after(x) 
 

@@ -46,6 +46,30 @@ class ShiftFeatures(nn.Module):
         assert False, f"Wrong dim of tensor x: {x.shape}"
 
 #===============================================================================
+
+class Scaler(nn.Module):
+    def __init__(self, kind=0, value=1., dim=1,  E=None):
+        super().__init__()        
+        self.kind = kind
+        if   kind == 2:                # training multiplier for each components
+            if dim == 2:
+                self.scale = nn.Parameter( torch.empty(1, E, 1,1).fill_(float(value)) )
+            else:
+                self.scale = nn.Parameter( torch.empty(1, 1, E ).fill_(float(value)) )
+
+        elif kind == 1:                # training common multiplier
+            self.scale = nn.Parameter( torch.tensor(float(value)) )     # 0 ??? 
+        else:                         # constant multiplayer
+            self.scale = None
+    #---------------------------------------------------------------------------        
+
+    def forward(self, x):        
+        if self.scale is None:
+            return x
+        return x*self.scale
+
+
+#===============================================================================
 # Набор статических методов, создающих различные элементарные модули
 #===============================================================================
 

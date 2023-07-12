@@ -27,6 +27,10 @@ class Config:
     def __str__(self):
         return self.get_str()
 
+    def get(self, param, default=None):
+        """ get param value by name """
+        return self.__dict__[param] if param in self.__dict__ else default
+
     def copy(self):
         return copy.deepcopy(self)
 

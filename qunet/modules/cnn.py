@@ -28,9 +28,9 @@ class ConvBlock(nn.Sequential):
 
 #===============================================================================
 
-class ResidualConvBlock(nn.Sequential):
+class Conv2dBlock(nn.Sequential):
     def __init__(self, in_channels, out_channels, kernel_size=3,  bias=False, stride=1, stride_first=True,
-                drop_d=0, shift=0, norm=1, norm_last=1, num=2,  fun="relu"):
+                drop=0, shift=0, norm=1, norm_block=1, num=2,  fun="relu"):
         """
         shape and channels will not change
         """
@@ -51,13 +51,13 @@ class ResidualConvBlock(nn.Sequential):
                     layers.append( Create.norm(out_channels, norm, 2) )
                 if fun:
                     layers.append( Create.activation(fun) )
-                if drop_d:
-                    layers.append( Create.dropout(drop_d) )
+                if drop:
+                    layers.append( Create.dropout(drop) )
                 if shift:
                     layers.append( ShiftFeatures() )
 
-        if norm_last:
-            layers.append( Create.norm(out_channels, norm_last, 2) )
+        if norm_block:
+            layers.append( Create.norm(out_channels, norm_block, 2) )
 
         super().__init__(*layers)
 
@@ -101,7 +101,7 @@ class CNN(nn.Module):
         Dropout            
             d1   -  Dropout1d
             d2   -  Dropout2d
-            d    -  DropoutXd, X = cfg.drop_d 
+            d    -  DropoutXd, X = cfg.drop
 
         """
         super().__init__()
@@ -120,9 +120,9 @@ class CNN(nn.Module):
             
             stride_first  = True,   # делать stride>1 на первом Conv2d, иначе на последнем
 
-            drop_d = 2,             # тип Dropout для всех токенов `d` строки blocks
-            drop_d_inside = 2,      # тип Dropout между Conv2d в блоках ('r', 'b')
-            drop_d_after  = 2,      # тип Dropout после блоков ('r')
+            drop = 2,             # тип Dropout для всех токенов `d` строки blocks
+            drop_inside = 2,      # тип Dropout между Conv2d в блоках ('r', 'b')
+            drop_after  = 2,      # тип Dropout после блоков ('r')
 
             shift_inside  = 0,      # добавлять ShiftFeatires между Conv2d в блоках ('r')
             shift_after   = 0,      # добавлять ShiftFeatires после блоков ('r')
@@ -131,7 +131,7 @@ class CNN(nn.Module):
 
             norm_before   = 0,      # тип нормировки перед блоком block(x)
             norm_inside   = 1,      # тип нормировки внутри блока block(x) между Conv2d
-            norm_last     = 1,      # тип нормировки внутри блока block(x) после последнего Conv2d
+            norm_block    = 1,      # тип нормировки внутри блока block(x) после последнего Conv2d
             norm_align    = 1,      # тип нормировки внутри блока align(x) после Conv2d
             norm_after    = 0,      # добавлять нормировку после блоков ('r')
             
@@ -139,8 +139,8 @@ class CNN(nn.Module):
             fun_inside    = 'relu', # активационная функция для блоков ('r')
             fun_after     = "",     # добавлять активационную функцию после блоков ('r')
             
-            res           = 1,      # тип множителя gamma (1-константа, 2-обучаемое число, 3-обучаемый вектор)
-            gamma         = 0.,     # начальное значение gamma (для res > 1)
+            mult          = 0,      # тип множителя scale (0-нет, 1-обучаемый скаляр, 2-обучаемый вектор)
+            scale         = 1.,     # начальное значение scale (для mult > 0)
 
             avg           = True,   # добавить после blocks слой nn.AdaptiveAvgPool2d(1)
             flat          = True,   # добавить в конце nn.Flatten() 
@@ -153,18 +153,16 @@ class CNN(nn.Module):
         channels = cfg.input
 
         tokens = cfg.blocks.replace('(', ' ( ').replace(')', ' ) ').split(' ')
+        tokens = [token for token in tokens if token]
         all_blocks, i = [], 0
         while  i < len(tokens):
             token = tokens[i]
-            if len(token) == 0:
-                i += 1
-                continue
 
             if token == '(':
                 i1 = i+1
                 i = self.get_close_bracket(tokens, i+1,  '(', ')')
                 blocks, channels = self.get_sequential(tokens, i1, i, channels, cfg=cfg)
-                all_blocks +=  blocks
+                all_blocks += [ blocks ]
                 i += 1
                 continue
 
@@ -228,7 +226,7 @@ class CNN(nn.Module):
             return blocks, channels
 
         if  token[:3] == 'cnf' and ( len(token) == 3 or token[3].isdigit() ):
-            parts  = token[3:].split('_')  if len(token) > 1 else []
+            parts  = token[3:].split('_')  if len(token[3:]) > 0 else []
             chan   = int(parts[0]) if len(parts) > 0 else channels
             kern   = int(parts[1]) if len(parts) > 1 else 3
             stride = int(parts[2]) if len(parts) > 2 else 1
@@ -285,11 +283,11 @@ class CNN(nn.Module):
             stride = int(parts[2]) if len(parts) > 2 else 1
 
             block= Residual(
-                    ResidualConvBlock(channels, Eout, kernel_size=kern, stride=stride, stride_first=cfg.stride_first, bias=cfg.bias, norm=cfg.norm_inside, norm_last=cfg.norm_last, fun=cfg.fun_inside, drop_d=cfg.drop_d_inside, shift=cfg.shift_inside),
-                    E=channels, Eout=Eout, res = cfg.res, gamma=cfg.gamma, stride=stride,
+                    Conv2dBlock(channels, Eout, kernel_size=kern, stride=stride, stride_first=cfg.stride_first, bias=cfg.bias, norm=cfg.norm_inside, norm_block=cfg.norm_block, fun=cfg.fun_inside, drop=cfg.drop_inside, shift=cfg.shift_inside),
+                    E=channels, Eout=Eout, mult = cfg.mult, scale=cfg.scale, stride=stride,
                     norm_before= cfg.norm_before,    # для resnetXX 0
                     norm_align = 0 if (channels==Eout and stride==1) else cfg.norm_align,
-                    drop_d_after = cfg.drop_d_after, dim=2, shift_after=cfg.shift_after,
+                    drop_after = cfg.drop_after, dim=2, shift_after=cfg.shift_after,
                     norm_after = cfg.norm_after, fun_after = cfg.fun_after,
                     name=token )
             channels = Eout
@@ -301,14 +299,14 @@ class CNN(nn.Module):
             kern   = int(parts[1]) if len(parts) > 1 else 3
             stride = int(parts[2]) if len(parts) > 2 else 1
 
-            block = ResidualConvBlock(channels, Eout, kernel_size=kern, stride=stride, stride_first=cfg.stride_first, bias=cfg.bias, norm=cfg.norm_inside, norm_last=cfg.norm_last, fun=cfg.fun, drop_d=cfg.drop_d_inside, shift=cfg.shift_inside)
+            block = Conv2dBlock(channels, Eout, kernel_size=kern, stride=stride, stride_first=cfg.stride_first, bias=cfg.bias, norm=cfg.norm_inside, norm_block=cfg.norm_block, fun=cfg.fun, drop=cfg.drop_inside, shift=cfg.shift_inside)
             block.name = token
             channels = Eout
             return [block], channels
 
         if  token[0] == 'd' and ( len(token) == 1 or token[1].isdigit() ):
             parts = token[1:].split('_') if len(token) > 1 else []
-            dim  = int(parts[0]) if len(parts) > 0 else cfg.drop_d
+            dim  = int(parts[0]) if len(parts) > 0 else cfg.drop
             assert dim in [1,2], f"Dropout layer dimension can be 1 or 2, but got {dim}"
             block = Create.dropout(dim) 
             block.name = token
@@ -390,10 +388,10 @@ class CNN(nn.Module):
             blocks      = "(cnf64_7_2 m3_2_1) 2r r128_3_2 r r256_3_2 r r512_3_2 r",
             norm_before = 0,
             norm_inside = 1,            
-            norm_last   = 1,
+            norm_block  = 1,
             norm_after  = 0,
             fun         = 'relu',
-            res         = 1,            
+            mult        = 0,                        
         )
         return cfg
 
@@ -405,6 +403,9 @@ class CNN(nn.Module):
         cnn = CNN(input = C, blocks = "(c64_7_2 n f m3_2) r64 m r128 m")
         x = torch.rand(B,C,H,W)
         y = cnn(x)
+        s = ModelState(cnn)
+        s.layers(2, input_size=(B,C,H,W))
+        #print(cnn)
         print(f"ok CNN, output = {tuple(y.shape)}")
 
         return True
@@ -448,29 +449,29 @@ class CNN(nn.Module):
                 plt.text(i, ymin, f"{st}\n", ha='center', fontsize=6, family="monospace")
 
         ax2 = ax.twinx()
-        idx_gamma_d, gamma_d = [], []
+        idx_scale_d, scale_d = [], []
         for i,block in enumerate(blocks):
-            if hasattr(block, 'gamma_d') and block.gamma_d is not None:
-                idx_gamma_d.append(i)
-                gamma_d.append( block.gamma_d.sqrt().cpu().item() )
-        if gamma_d:
-            ax2.set_ylim(bottom=0, top=1.1*np.max(gamma_d))
-            ax2.plot(idx_gamma_d, gamma_d, marker=".")
-        ax2.set_ylabel("gamma")
+            if hasattr(block, 'scale_d') and block.scale_d is not None:
+                idx_scale_d.append(i)
+                scale_d.append( block.scale_d.sqrt().cpu().item() )
+        if scale_d:
+            ax2.set_ylim(bottom=0, top=1.1*np.max(scale_d))
+            ax2.plot(idx_scale_d, scale_d, marker=".")
+        ax2.set_ylabel("scale")
 
         ax3 = ax.twinx()
         ax3.set_yscale('log')
-        idx_gamma_g, gamma_g = [], []
+        idx_scale_g, scale_g = [], []
         for i,block in enumerate(blocks):
-            if hasattr(block, 'gamma_g') and block.gamma_g is not None:
-                idx_gamma_g.append(i)
-                gamma_g.append( block.gamma_g.sqrt().cpu().item() )
-        if gamma_g:
-            ax3.plot(idx_gamma_g, gamma_g, ":", marker=".")
-        ax3.set_ylabel("gamma grad")
+            if hasattr(block, 'scale_g') and block.scale_g is not None:
+                idx_scale_g.append(i)
+                scale_g.append( block.scale_g.sqrt().cpu().item() )
+        if scale_g:
+            ax3.plot(idx_scale_g, scale_g, ":", marker=".")
+        ax3.set_ylabel("scale grad")
         ax3.spines["right"].set_position(("outward", 50))
         
         plt.show()
 
         if info:
-            return {'idx': idx, 'names': names, 'res': res, 'gamma_d': gamma_d, 'gamma_g': gamma_g}
+            return {'idx': idx, 'names': names, 'res': res, 'scale_d': scale_d, 'scale_g': scale_g}

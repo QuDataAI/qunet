@@ -1,8 +1,9 @@
-﻿import math, copy
+﻿import math, copy,  re
 import numpy as np, matplotlib.pyplot as plt
 import torch, torch.nn as nn
 
 from ..config           import Config
+from .total             import Create
 from .mlp               import MLP
 from .residual          import Residual
 from .transformer_plot  import plot_transformer_blocks
@@ -26,8 +27,8 @@ class Attention(nn.Module):
                 tokens embedding dimension
             H (int):
                 number of heads (E % H == 0 !)
-            drop (float=0.0):
-                dropout probability after softmax
+            drop (int=0):
+                is or not dropout after softmax
             res (int=1):
                 kind of skip-connections (for TransformerBlock): (1) x+f(x), (2)  x+w*f(x) - w training one for all E; (3) w training for each E
             causal (bool=False):
@@ -62,7 +63,7 @@ class Attention(nn.Module):
             H      = 1,        # число голов (E % H == 0 !)                        
             causal = False,    # причинное внимание (как в GPT) иначе как в BERT
             T_max  = 2048,     # максимальное число токенов (нужно для causal==True)
-            drop   = 0,        # dropout after softmax
+            drop   = 0,        # is or not dropout after softmax
         ))
 
     #---------------------------------------------------------------------------
@@ -76,8 +77,8 @@ class Attention(nn.Module):
 
         self.c_attn = nn.Linear(E,3*E)  # key, query, value projections for all heads
         self.c_proj = nn.Linear(E,  E)  # output projection
-
-        self.drop  = nn.Dropout(cfg.drop)      # regularization        
+        
+        self.drop  = nn.Dropout(0.0) if cfg.drop else nn.Identity()
 
         if cfg.causal:
             # causal mask to ensure that attention is only applied to the left in the input sequence
@@ -239,141 +240,7 @@ class FFT(nn.Module):
         return res
 
 #===============================================================================
-
-class  TransformerBlock(nn.Module):
-    """
-    One Transformer Block (it is all you need: fft, attention, mlp)
-    """
-    def __init__(self,  *args, **kvargs) -> None:
-        """
-        One Transformer Block (it is all you need: fft, attention, mlp)
-
-        Args
-        ------------
-            E (int):
-                tokens embedding dimension
-            H (int=1):
-                number of heads (E % H == 0 !)
-            drop (float=0.0):
-                dropout probability after block
-            res (int=1):
-                kind of skip-connections: (0) f(x) - none; (1) x+f(x), (2)  x+w*f(x) training one for all E; (3) training for each E
-            causal (bool=False):
-                kind of causal attention mask (True: GPT, False: BERT)
-            T_max (int=2048):
-                maximum number of tokens (needed for causal==True)
-            gamma (float = 0.1):
-                initial value of the learning residual multiplier
-
-        Example
-        ------------
-        ```
-        B, T, E, H = 1, 10, 128, 16
-        block = TransformerBlock(E=E, H=H)
-        x = torch.rand(B,T,E)
-        y = block(x)
-        ```
-        """
-        super().__init__()
-        self.cfg = TransformerBlock.default()
-        cfg = self.cfg.set(*args, **kvargs)
-
-        self.cfg.att.E = self.cfg.mlp.input = self.cfg.mlp.output = cfg.E
-
-        if 'H' in kvargs:
-            self.cfg.att.H = kvargs['H']
-
-        if 'causal' in kvargs:
-            self.cfg.att.causal = kvargs['causal']
-
-        if 'T_max'  in kvargs:
-            self.cfg.att.T_max = kvargs['T_max']
-
-        self.create()
-
-    #---------------------------------------------------------------------------
-
-    @staticmethod
-    def default():
-        return copy.deepcopy(Config(
-            E      = None,              # tokens embedding dimension    
-            H      = 1,
-
-            is_fft = 0,
-            is_att = 1,
-            is_mlp = 1,            
-
-            res    = 2,
-            norm   = 2,            
-            gamma  = 0.0,
-            drop   = 0.0,               # dropout probability after block
-
-            att = Attention.default(),
-            mlp = Config(MLP.default(), stretch=4, res=1),
-            fft = FFT.default(),
-        ))
-
-    #---------------------------------------------------------------------------
-
-    def create(self):
-        cfg = self.cfg
-        assert cfg.E is not None and cfg.E > 0,  f"TransformerBlock: embedding needs to be defined: E={cfg.E}, input={cfg.mlp.input}, output={cfg.mlp.output}"
-
-        layers = []
-        if cfg.is_fft:
-            layers.append( Residual(FFT(cfg.fft),       E=cfg.att.E, res=cfg.res,  gamma=cfg.gamma,  norm_before=cfg.norm, name="fft") )
-        if cfg.is_att:
-            layers.append( Residual(Attention(cfg.att), E=cfg.att.E, res=cfg.res,  gamma=cfg.gamma,  norm_before=cfg.norm, name="att") )
-        if cfg.is_mlp:
-            layers.append( Residual(MLP(cfg.mlp),       E=cfg.att.E, res=cfg.res,  gamma=cfg.gamma,  norm_before=cfg.norm, name="mlp") )
-    
-        self.layers = nn.Sequential( *layers )
-
-    #---------------------------------------------------------------------------
-
-    def forward(self, x):
-        """
-        (B,T,E) -> (B,T,E)
-        """
-        return self.layers(x)                                            # (B,T,E)
-
-    #---------------------------------------------------------------------------
-
-    def update(self):
-        for layer in self.layers:        
-            layer.update()
-
-    #---------------------------------------------------------------------------
-
-    def decay(self):
-        res = set()
-        for layer in self.layers:        
-            res.update( layer.decay() )
-        return res
-
-
-    #---------------------------------------------------------------------------
-
-    def debug(self, value=True, beta=None):
-        for layer in self.layers:        
-            layer.debug = value
-            if beta is not None:
-                layer.beta = beta
-    #---------------------------------------------------------------------------
-
-    @staticmethod
-    def unit_test():
-        B, T, E, H = 1, 10, 128, 16
-        block = TransformerBlock(E=E, H=H)
-        x = torch.rand(B,T,E)
-        y = block(x)
-        res = x.shape == y.shape
-        if not res:
-            print(f"!! TransformerBlock: x.shape={x.shape} != y.shape={y.shape}")
-        else:
-            print("ok TransformerBlock")
-        return res
-
+#                              Transformer
 #===============================================================================
 
 class  Transformer(nn.Module):
@@ -388,30 +255,20 @@ class  Transformer(nn.Module):
         ------------
             E (int):
                 tokens embedding dim
-            H (int):
+            H (int = 1):
                 number of heads E % H == 0 !
-            n_blocks (int=1):
-                number of transformer blocks
-            res (int=1):
-                kind of skip-connections: (0) f(x) - none; (1) x+f(x), (2)  x+w*f(x) training one for all E; (3) training for each E
             causal (bool=False):
                 kind of causal attention mask (True: GPT, False: Bert)
             T_max  (int=2048):
                 maximum number of tokens (needed for causal==True)
-            is_mix (int=0):
-                will be
-            is_fft (int=0):
-                there is a FFT (FNet) block, can be a list (for each block)
-            is_att  (int=1):
-                there is an attention block, can be a list (for each block)
-            is_mlp  (int=1):
-                there is an MLP block, can be a list (for each block)
-            gamma (float = 0.1):
+            mult (int=1):
+                multiplier type scale: (0) - none: x+f(x), (1)-trainable scalar, (2)-trainable vector: x+s*f(x)
+            scale (float = 1.):
                 initial value of the learning residual multiplier
         Example:
         ------------
         ```
-        m = Transformer(E=64, H=8, n_blocks=3, is_fft=[1,1,0], is_att=[0,0,1])
+        m = Transformer(E=64, H=8, blocks="3(att mlp) 2(fft mlp) 5(mlp)")
 
         x = torch.rand(1,10,64)  # (B,T,E) = (batch, token, embedding)
         y = m(x)                 # (B,T,E) -> (B,T,E)
@@ -419,60 +276,193 @@ class  Transformer(nn.Module):
         """
         super().__init__()
         self.cfg = Transformer.default()
-        cfg = self.cfg.set(*args, **kvargs)
-
-        cfg.block.E     = cfg.E
-        cfg.block.res   = cfg.res
-        cfg.block.gamma = cfg.gamma        
-        
-        H = kvargs['H'] if 'H' in kvargs else (self.cfg.H if self.cfg.has('H') else self.cfg.block.att.H)
-        self.cfg.block.att.H = H
-
-        res = kvargs['res'] if 'res' in kvargs else (self.cfg.res if self.cfg.has('res') else self.cfg.block.att.res)
-        self.cfg.block.fft.res = self.cfg.block.att.res = self.cfg.block.mlp.res = res
-
-        causal = kvargs['causal'] if 'causal' in kvargs else (self.cfg.causal if self.cfg.has('causal') else self.cfg.block.att.causal)
-        self.cfg.block.att.causal = causal
-
-        T_max = kvargs['T_max'] if 'T_max' in kvargs else (self.cfg.T_max if self.cfg.has('T_max') else self.cfg.block.att.T_max)
-        self.cfg.block.att.T_max = T_max
-
-        after = kvargs['after'] if 'after' in kvargs else (self.cfg.after if self.cfg.has('after') else self.cfg.block.fft.after)
-        self.cfg.block.fft.after = after
-
-        self.create()
+        cfg = self.cfg.set(*args, **kvargs)        
+        self.create(cfg)
 
     #---------------------------------------------------------------------------
 
     @staticmethod
     def default():
         return copy.deepcopy(Config(
-            E         = None,  # эмбеддинг
-            n_blocks  = 1,     # число слоёв трансформера
-            is_fft    = 0,     # there is a FFT (FNet) block, can be a list (for each block)
-            is_att    = 1,     # there is an attention block, can be a list (for each block)
-            is_mlp    = 1,     # there is an MLP block, can be a list (for each block)
-            res       = 2,            
-            gamma     = 0.1,   # initial value of the learning residual multiplier
-            block = TransformerBlock.default()
+            E         = None,  # tokens embedding dim    
+            blocks    = "",    # string with tokens
+            H         = 1,          #  number of heads E % H == 0 !
+            causal    = False,      # kind of causal attention mask (True: GPT, False: Bert)
+            T_max     = 2048,       # maximum number of tokens (needed for causal==True)
+            mult      = 0,          # multiplier type scale: (0) - none: x+f(x), (1)-trainable scalar, (2)-trainable vector: x+s*f(x)
+            scale     = 1.,         # initial value of the learning residual multiplier
+            
+            drop_inside = 0,        # тип Dropout внутри Attention и MLP
+            drop_after  = 0,        # тип Dropout после блоков ('r')
+
+            shift_inside  = 0,      # добавлять ShiftFeatires между Conv2d в блоках ('r')
+            shift_after   = 0,      # добавлять ShiftFeatires после блоков ('r')
+
+            norm          = 2,      # тип нормировки для токенов 'n'
+            norm_before   = 0,      # тип нормировки перед блоком block(x)
+            norm_inside   = 2,      # тип нормировки внутри блока block(x) между Conv2d
+            norm_block    = 2,      # тип нормировки внутри блока block(x) после последнего Conv2d
+            norm_align    = 2,      # тип нормировки внутри блока align(x) после Conv2d
+            norm_after    = 0,      # добавлять нормировку после блоков ('r')
+
+            fun           = 'gelu', # активационная функция для токена `f`
+            fun_inside    = 'gelu', # активационная функция для блоков ('r')
+            fun_after     = "",     # добавлять активационную функцию после блоков ('r')
+
+            dim           = 1,
         ))
 
     #---------------------------------------------------------------------------
 
-    def create(self):
-        cfg = self.cfg
-        is_fft = [cfg.is_fft] * cfg.n_blocks  if type(cfg.is_fft) is int else cfg.is_fft
-        is_att = [cfg.is_att] * cfg.n_blocks  if type(cfg.is_att) is int else cfg.is_att
-        is_mlp = [cfg.is_mlp] * cfg.n_blocks  if type(cfg.is_mlp) is int else cfg.is_mlp
+    def create(self, cfg):
+        assert cfg.E is not None and type(cfg.E)==int, f"Wrong E={cfg.input}, should be int (embedding dim)"     
+        self.__num_blocks = 1
+        tokens = cfg.blocks.replace('(', ' ( ').replace(')', ' ) ')
+        tokens = cfg.blocks.replace('[', ' [ ').replace(']', ' ] ')
+        tokens = tokens.split(' ')
+        tokens = [token for token in tokens if token]
+        all_blocks = self.parse(tokens, cfg)
+        self.blocks = nn.ModuleList(all_blocks)
 
-        assert type(is_fft) is list and type(is_att) is list and type(is_mlp) is list, "Transformer: is_fft, is_att, is_mlp should be int or list of int"
-        assert len(is_fft) == len(is_att) and len(is_fft) == len(is_mlp), "Transformer: if is_fft, is_att, is_mlp are lists, their length should be the same"
+    #---------------------------------------------------------------------------
 
-        blocks = []
-        for i in range(cfg.n_blocks):
-            block = TransformerBlock(cfg.block, is_fft=is_fft[i], is_att=is_att[i], is_mlp=is_mlp[i])
-            blocks.append(block)
-        self.blocks= nn.ModuleList(blocks)
+    def parse(self, tokens, cfg):
+        E = cfg.E
+        all_blocks, i = [], 0
+        while  i < len(tokens):
+            token = tokens[i]
+
+            if token == '(':
+                i1 = i+1
+                i = self.get_close_bracket(tokens, i+1,  '(', ')')
+                blocks = []
+                for _ in range(self.__num_blocks):
+                    b, E = self.get_sequential(tokens, i1, i, E, cfg=cfg)
+                    blocks += [b]
+                self.__num_blocks = 1
+                all_blocks +=  blocks 
+                i += 1
+                continue
+
+            if token == '[':
+                i1 = i+1
+                i = self.get_close_bracket(tokens, i+1,  '[', ']')
+                blocks = []
+                for _ in range(self.__num_blocks):
+                    blks, E = self.get_sequential(tokens, i1, i, E, cfg=cfg)
+                    blks = [ b for b in blks ]
+                    blocks += blks
+                self.__num_blocks = 1
+                all_blocks +=  blocks 
+                i += 1
+                continue
+
+
+            blocks, E = self.get_blocks(token=token, E=E, cfg=cfg)            
+            if blocks  and type(blocks[0]) != nn.Identity:
+                all_blocks += blocks
+
+            i += 1
+        return all_blocks
+    
+    #---------------------------------------------------------------------------
+
+    def get_close_bracket(self, tokens, i, bra = '(', ket = ')'):
+        open = 1
+        while i < len(tokens):
+            if   tokens[i] == bra:  open += 1
+            elif tokens[i] == ket:  open -= 1
+            if open == 0:
+                return i
+            i += 1
+        assert tokens, f"No close bracket in {tokens}"
+
+    #---------------------------------------------------------------------------
+
+    def get_sequential(self, tokens, i1, i2, E, cfg):
+        layers, i = [], i1
+        while i < i2:
+            token = tokens[i]
+            if len(token):
+                if token == '(':
+                    i1 = i+1
+                    i  = self.get_close_bracket(tokens, i+1,  '(', ')')
+                    blocks, E = self.get_sequential(tokens, i1, i, E, cfg)
+                else:
+                    blocks, E = self.get_blocks(token=token, E=E, cfg=cfg)
+                    if blocks is None: 
+                        continue
+                layers += blocks
+            i += 1
+
+        return nn.Sequential(*layers), E
+    #---------------------------------------------------------------------------
+
+    def get_blocks(self, token, E, cfg):
+        if token[0].isdigit():
+            num = re.search(r'(\d+)', token).group() # number of repetitions of the token            
+            token = token[len(num):]
+            num = int(num)            
+            if len(token) == 0:
+                self.__num_blocks = num
+                return None, E
+            else:
+                blocks = []
+                for _ in range(num):
+                    b, E = self.get_blocks(token, E, cfg)
+                    if b is None: 
+                        continue
+                    blocks += b
+                return blocks, E
+
+        if  token[:3] == 'mlp' and ( len(token) == 3 or token[3].isdigit() ):
+            parts    = token[3:].split('_')  if len(token[3:]) > 1 else []
+            E2       = int(parts[0]) if len(parts) > 0 else E
+            stretch  = int(parts[1]) if len(parts) > 1 else 4
+            block    = Residual(
+                MLP(input=E, output=E2, stretch=stretch, drop = cfg.drop_inside, norm=cfg.norm_inside, fun=cfg.fun_inside),
+                E=E, Eout=E2, mult = cfg.mult, scale=cfg.scale,
+                norm_before= cfg.norm_before, norm_align = cfg.norm_align,  norm_block = cfg.norm_block,
+                drop_after = cfg.drop_after, dim=1, shift_after=cfg.shift_after,
+                norm_after = cfg.norm_after, fun_after = cfg.fun_after, name=token)
+            block.name = token
+            E = E2
+            return [block], E
+
+        if  token == 'att' and ( len(token) == 3 or token[3].isdigit() ):
+            block = Residual(
+                Attention(E=E, H=cfg.H, causal=cfg.causal, T_max=cfg.T_max, drop = cfg.drop_inside),
+                E=E, Eout=E, mult = cfg.mult, scale=cfg.scale,
+                norm_before= cfg.norm_before, norm_align = cfg.norm_align,  norm_block = cfg.norm_block,
+                drop_after = cfg.drop_after, dim=1, shift_after=cfg.shift_after,
+                norm_after = cfg.norm_after, fun_after = cfg.fun_after, name=token )
+            block.name = token
+            return [block], E
+
+        if  token == 'fft' and ( len(token) == 3 or token[3].isdigit() ):
+            block = Residual(
+                FFT(),
+                E=E, Eout=E, mult = cfg.mult, scale=cfg.scale,
+                norm_before= cfg.norm_before, norm_align = cfg.norm_align, norm_block = cfg.norm_block,
+                drop_after = cfg.drop_after, dim=1, shift_after=cfg.shift_after,
+                norm_after = cfg.norm_after, fun_after = cfg.fun_after, name=token )
+            block.name = token
+            return [block], E
+        
+        if token[0] == 'n' and ( len(token) == 1 or token[1].isdigit() ):
+            parts  = token[1:].split('_') if len(token) > 1 else []
+            kind   = int(parts[0]) if len(parts) > 0 else cfg.norm            
+            blocks = [ Create.norm(E, kind, 1) ] if kind else None
+            return blocks, E
+
+        if token == "f":
+            if cfg.fun:
+                return [Create.activation(cfg.fun)], E
+            else:
+                return None, E
+
+        assert token in ['relu', 'gelu', 'relu6', 'sigmoid', 'tanh', 'swish', 'hswish', 'hsigmoid'], f"Unknown activation function '{token}'"
+        return [Create.activation(token)], E
 
     #---------------------------------------------------------------------------
 
@@ -486,21 +476,24 @@ class  Transformer(nn.Module):
 
     def update(self):
         for block in self.blocks:
-            block.update()
+            if hasattr(block, "update"):            
+                block.update()
 
     #---------------------------------------------------------------------------
 
     def decay(self):
         res = set()
         for block in self.blocks:
-            res.update(block.decay() )    
+            if hasattr(block, "decay"):
+                res.update(block.decay() )    
         return res        
 
     #---------------------------------------------------------------------------
 
     def debug(self, value=True, beta=None):
         for block in self.blocks:
-            block.debug(value, beta)
+            if hasattr(block, "debug"):
+                block.debug(value, beta)
 
     #---------------------------------------------------------------------------
 
@@ -511,20 +504,33 @@ class  Transformer(nn.Module):
 
     @staticmethod
     def unit_test():
-        B, T, E, H = 1, 10, 128, 16
-        cfg = Config(E=E, H=H, n_blocks=2, is_fft=1, is_att=1, res=2, gamma=0.2)
-        m = Transformer(cfg)
-        x = torch.rand(B,T,E)  # (B,T,E) = (batch, token, embedding)
+        dim = 2
+        if dim==3:
+            B, T, E, H = 1, 10, 128, 16
+            #cfg = Config(E=E, H=H, blocks="2[att mlp] fft mlp")
+            cfg = Config(E=E, H=H, blocks="mlp")
+            m = Transformer(cfg)
+            x = torch.rand(B,T,E)  # (B,T,E) = (batch, token, embedding)
+            y = m(x)                                # (B,T,E) -> (B,T,E)
+            state = ModelState(m)
+            state.layers(2, input_size=(B,T,E))
+        else:
+            B, E = 10, 128            
+            cfg = Config(E=E,  blocks="mlp256 mlp")
+            m = Transformer(cfg)            
+            x = torch.rand(B,E)
+            y = m(x)                                # (B,E) -> (B,E)
+            state = ModelState(m)
+            state.layers(2, input_size=(B,E))
 
-        #state = ModelState(m)
-        #state.layers(2, input_size=(B,T,E))
-
+        """
         m.debug(True)        
         y = m(x)               # (B,T,E) -> (B,T,E)
         y.mean().backward()
         m.update()
         #print( m.plot(info=True) )
         #for block in m.blocks: print(block.cfg)
+        """
 
         res = x.shape == y.shape
         if not res:

@@ -69,7 +69,7 @@ class Trainer:
         self.model_ema = None            # reference to ema model
 
         self.best = Config(
-            score = None,               # best val score
+            scores = {},                # best val scores
             loss = None,                # best val loss
             score_model = None,         # copy of the best model by val score
             loss_model  = None,         # copy of the best model by val loss
@@ -138,6 +138,8 @@ class Trainer:
             ),
         )
 
+        self.view.protect(False)       # for dynamic score view creation
+
         # -------------------------------- история и текущие метрики процесса обучения модели
         self.hist = Config(            # история обучения и валидации:
             epochs  = 0,               # число эпох в режиме обучения (same self.epoch)
@@ -152,35 +154,31 @@ class Trainer:
             labels = [],
             trn  = Config(
                         best = Config(  loss = None,       # лучшее значение тренировочная ошибки
-                                        score = None,      # лучшее значение тенировочной метрики (первой)
+                                        scores = {},       # лучшие значения тенировочных метрик
                                         loss_samples  = 0, # когда была лучшая тренировочная ошибка
                                         loss_epochs   = 0, # когда была лучшая тренировочная ошибка
                                         score_samples = 0, # когда была лучшая тренировочная метрика
                                         score_epochs  = 0, # когда была лучшая тренировочная метрика
                                         losses=[],         # точки достижения лучшей ошибки  (loss,epochs,samples,steps)
-                                        scores=[]          # точки достижения лучшей метрики (score,epochs,samples,steps)
                                       ),
                         epochs=[], samples=[], steps=[],   # история заначений после вызова training_step
                         batch_size=[], lr=[],
                         samples_epoch=[], steps_epoch=[],
-                        times=[], losses=[], scores=[]
+                        times=[], losses=[], scores={}
                     ),
             val  = Config(
                         best = Config(  loss = None,       # лучшее значение валиадционная ошибки
-                                        score = None,      # лучшее значение валиадционная метрики (первой)
+                                        scores = {},       # лучшие значения тенировочных метрик
                                         loss_ema = None,   # лучшее значение валиадционная ошибки EMA модели
-                                        score_ema = None,  # лучшее значение валиадционная метрики (первой) EMA модели
+                                        scores_ema = {},   # лучшие значения тенировочных метрик (первой) EMA модели
                                         loss_samples  = 0, # когда была лучшая валиадционная ошибка
                                         loss_epochs   = 0, # когда была лучшая валиадционная ошибка
-                                        score_samples = 0, # когда была лучшая валиадционная метрика
-                                        score_epochs  = 0, # когда была лучшая валиадционная метрика
                                         losses=[],         # точки достижения лучшей ошибки  (loss,epochs,samples,steps)
-                                        scores=[]          # точки достижения лучшей метрики (score,epochs,samples,steps)
                                     ),
                         epochs=[], samples=[], steps=[],    # история заначений после вызова validation_step
                         batch_size=[], lr=[], samples_epoch=[],
                         steps_epoch=[], times=[],
-                        losses=[], scores=[]
+                        losses=[], scores={}
                     ),
 
             params = 0
@@ -291,16 +289,23 @@ class Trainer:
 
     #---------------------------------------------------------------------------
 
-    def get_metrics(self, step):
-        """ из результатов шага обучения вделить ошибку и метрику"""
-        if torch.is_tensor(step):
-            loss   = step
+    def get_metrics(self, data):
+        """ из результатов шага обучения выделить ошибку и метрики"""
+        if torch.is_tensor(data):
+            loss = data
             scores = None
-        elif type(step) is dict:
-            loss  = step.get('loss')
-            scores = step.get('score')
-        if torch.is_tensor(scores) and scores.ndim == 0:
-            scores = scores.view(1)
+        elif type(data) is dict:
+            loss = data.get('loss')
+            if loss:
+                del data['loss']
+            if data:
+                scores = data
+            else:
+                scores = None
+        if scores:
+            for score_name in scores.keys():
+                if torch.is_tensor(scores[score_name]) and scores[score_name].ndim == 0:
+                    scores[score_name] = scores[score_name].view(1)
         return loss, scores
 
     #---------------------------------------------------------------------------
@@ -345,8 +350,9 @@ class Trainer:
         fun_step = self.get_fun_step(model, train)  # функция шага тренировки или валидации
 
         samples, steps, beg, lst = 0, 0, time.time(), time.time()
-        counts_all, losses_all,  scores_all = torch.empty(0,1), None,  None
+        counts_all, losses_all,  scores_all = torch.empty(0,1), None,  {}
         batch_id = 0  # может и раньше итератор прерваться (enumerate - плохо)
+        epoch_scores = None
         for batch in data:
             num   = self.samples_in_batch(batch)
 
@@ -372,7 +378,7 @@ class Trainer:
             else:
                 with torch.autocast(device_type=self.device, dtype=self.dtype):
                     step = fun_step(batch, batch_id)
-            loss, scores = self.get_metrics(step)
+            loss, step_scores = self.get_metrics(step)
 
             if train:
                 if accumulate > 1:                  # normalize loss to account for batch accumulation (!)
@@ -401,64 +407,88 @@ class Trainer:
 
             samples += num                          # просмотренных примеров за эпоху
             losses_all = loss.detach() if losses_all is None else torch.vstack([losses_all, loss.detach()])
-            if scores is not None:
-                scores = scores.detach()            # just in case
-                assert scores.ndim == 1, f"scores should be averaged over the batch, but got shape:{scores.shape}"
-                scores_all = scores if scores_all is None else torch.vstack([scores_all, scores])
+
+            if step_scores is not None:
+                for score_name in step_scores.keys():
+                    score_step_data = step_scores[score_name].detach()
+                    assert score_step_data.ndim == 1, f"scores should be averaged over the batch, but got shape:{score_step_data.shape}"
+                    if score_name not in scores_all:
+                        scores_all[score_name] = score_step_data
+                    else:
+                        scores_all[score_name] = torch.vstack([scores_all[score_name], score_step_data])
+
             counts_all = torch.vstack([counts_all, torch.Tensor([num])])
 
             if verbose and (time.time()-lst > 1 or batch_id+1 == len(data) ):
                 lst = time.time()
                 self.fit_progress(train, batch_id+1, len(data),
-                                  losses_all, scores_all, counts_all, samples, steps, time.time()-beg)
+                                  losses_all, scores_all, counts_all, epoch_scores, samples, steps, time.time()-beg)
             
-            batch_id += 1  
+            batch_id += 1
+
+        if hasattr(self.model, "on_epoch_end"):
+            fun_on_epoch_end = model.on_epoch_end
+            epoch_metrics = fun_on_epoch_end()
+            _, epoch_scores = self.get_metrics(epoch_metrics)
 
         if train: self.hist.time.trn += (time.time()-beg)
         else:     self.hist.time.val += (time.time()-beg)
 
-        if scores_all is not None:
-            scores_all = scores_all.cpu()
+        if scores_all:
+            for score_name in scores_all.keys():
+                scores_all[score_name] = scores_all[score_name].cpu()
+        else:
+            scores_all = None
+
         if losses_all is not None:
-            self.fit_progress(train, len(data), len(data), losses_all, scores_all, counts_all, samples, steps, time.time()-beg)
+            self.fit_progress(train, len(data), len(data), losses_all, scores_all, counts_all, epoch_scores, samples, steps, time.time()-beg)
             losses_all = losses_all.cpu()
 
-        return losses_all, scores_all, counts_all, (samples, steps, time.time()-beg)
+        return losses_all, scores_all, counts_all, epoch_scores, (samples, steps, time.time()-beg)
 
     #---------------------------------------------------------------------------
 
-    def mean(self, losses, scores, counts):
+    def agg_metrics(self, steps_losses, steps_scores, steps_counts, epoch_scores):
         """ Вычислить среднее по всей эпохе """
-        assert losses is not None, "Do you calculate loss at all?"
+        assert steps_losses is not None, "Do you calculate loss at all?"
 
-        loss  = ((losses.detach().cpu() * counts).sum(dim=0) / counts.sum()).item()
-        if scores is not None:
-            scores = ((scores.detach().cpu() * counts).sum(dim=0) / counts.sum())
+        loss = ((steps_losses.detach().cpu() * steps_counts).sum(dim=0) / steps_counts.sum()).item()
+        scores = {}
+        if steps_scores is not None:
+            for score_name in steps_scores.keys():
+                scores[score_name] = ((steps_scores[score_name].detach().cpu() * steps_counts).sum(dim=0) / steps_counts.sum())[0]
+        if epoch_scores is not None:
+            for score_name in epoch_scores.keys():
+                scores[score_name] = epoch_scores[score_name].detach().cpu()[0]
+        if not scores:
+            scores = None
         return (loss, scores)
 
     #---------------------------------------------------------------------------
 
-    def fit_progress(self, train, batch_id, data_len, losses, scores, counts, samples, steps, tm):
+    def fit_progress(self, train, batch_id, data_len, losses, scores, counts, epoch_scores, samples, steps, tm):
         """
         Вывод информации о прогрессе обучения (эпоха, время, ошибка и т.п.)
         В конкретном проекте можно перопределить.
         """
-        loss, score = self.mean(losses, scores, counts)
+        loss, scores = self.agg_metrics(losses, scores, counts, epoch_scores)
         steps, samples = max(steps, 0), max(samples, 1)             # just in case
         st = ""
-        if score is not None and len(score):
-            st += f"score={score[0]:.4f} "                          # главная метрика
-            if len(score) > 1: st += "("                            # вспомогательные
-            for i in range(1, len(score)):
-                st += f"{score[i]:.4f}" + (", " if i+1 < len(score) else ") ")
+        if scores is not None:
+            for score_name in scores.keys():
+                st += f"{score_name}={scores[score_name]:.4f} "
         st += f"loss={loss:.4f};"
         st += " best"
-
-        if score is not None and len(score):
-            st += f" score=(val:{(self.hist.val.best.score or 0.0):.3f}[{self.hist.val.best.score_epochs or ' '}]"
-            if self.hist.val.best.score_ema:
-                st += f" ema:{(self.hist.val.best.score_ema or 0.0):.3f}"                    
-            st += f" trn:{(self.hist.trn.best.score or 0.0):.3f}[{self.hist.trn.best.score_epochs or ' '}]),"
+        if scores is not None:
+            for score_name in scores.keys():
+                score_val = self.hist.val.best.scores.get(score_name).score if score_name in self.hist.val.best.scores else 0.0
+                score_val_epoch = self.hist.val.best.scores.get(score_name).epochs if score_name in self.hist.val.best.scores else ' '
+                st += f" {score_name}=(val:{score_val:.3f}[{score_val_epoch}]"
+                if self.hist.val.best.get(f'{score_name}_ema'):
+                    st += f" ema:{(self.hist.val.best.get(f'{score_name}_ema',0.0)):.3f}"
+                score_trn = self.hist.trn.best.scores.get(score_name).score if score_name in self.hist.trn.best.scores else 0.0
+                score_trn_epoch = self.hist.trn.best.scores.get(score_name).epochs if score_name in self.hist.trn.best.scores else ' '
+                st += f" trn:{score_trn:.3f}[{score_trn_epoch}]),"
 
         st += f" loss=(val:{(self.hist.val.best.loss or 0.0):.3f}[{self.hist.val.best.loss_epochs or ' '}]"
         if self.hist.val.best.loss_ema:
@@ -494,8 +524,8 @@ class Trainer:
         model = model or self.model
         data = data or self.data.val
         model.to(self.device)
-        losses, scores, counts, (samples_val, steps_val, tm_val) = self.fit_one_epoch(model, data, train=False)
-        loss_val, score_val = self.mean(losses, scores, counts)
+        losses, scores, counts, epoch_scores, (samples_val, steps_val, tm_val) = self.fit_one_epoch(model, data, train=False)
+        loss_val, score_val = self.agg_metrics(losses, scores, counts, epoch_scores)
         score_val = score_val.item() if len(score_val) == 1 else score_val
         return {'loss': loss_val, 'score': score_val }
 
@@ -662,13 +692,16 @@ class Trainer:
 
         if pre_val and self.data.val is not None:
             assert len(self.data.val) > 0, "You don't have a single validation batch!"
-            losses, scores, counts, (samples_val, steps_val, tm_val) = self.fit_one_epoch(self.model, self.data.val, train=False)
-            loss_val, score_val = self.mean(losses, scores, counts)
+            losses, scores, counts, epoch_scores, (samples_val, steps_val, tm_val) = self.fit_one_epoch(self.model, self.data.val, train=False)
+            loss_val, score_val = self.agg_metrics(losses, scores, counts, epoch_scores)
             self.add_hist(self.hist.val, self.data.val.batch_size, samples_val, steps_val, tm_val, loss_val, score_val, self.scheduler.get_lr())
             print()
 
         epochs = epochs or 1_000_000_000
-        last_best = max(self.hist.val.best.score_epochs, self.hist.val.best.loss_epochs)
+        best_epochs = [self.hist.val.best.loss_epochs]
+        for score_name in self.hist.val.best.scores.keys():
+            best_epochs.append(self.hist.val.best.scores[score_name].epochs)
+        last_best = max(best_epochs)
         loss_val  = 0
         #for epoch in tqdm(range(1, epochs+1)):
         for epoch in range(1, epochs+1):
@@ -678,8 +711,8 @@ class Trainer:
             for callback in self.callbacks:
                 callback.on_train_epoch_start(self, self.model)
 
-            losses, scores, counts, (samples_trn,steps_trn,tm_trn) = self.fit_one_epoch(self.model, self.data.trn, train=True, states=states)            
-            loss_trn, score_trn = self.mean(losses, scores, counts)
+            losses, scores, counts, epoch_scores, (samples_trn,steps_trn,tm_trn) = self.fit_one_epoch(self.model, self.data.trn, train=True, states=states)
+            loss_trn, score_trn = self.agg_metrics(losses, scores, counts, epoch_scores)
             lr = self.scheduler.get_lr()
             self.add_hist(self.hist.trn, self.data.trn.batch_size, samples_trn, steps_trn, tm_trn, loss_trn, score_trn, lr)
 
@@ -692,14 +725,18 @@ class Trainer:
                 for callback in self.callbacks:
                     callback.on_best_loss(self, self.model)
 
-            if self.best_score(self.hist.trn.best.score, score_trn):
-                last_best = self.epoch
-                self.hist.trn.best.score = score_trn[0]
-                self.hist.trn.best.score_epochs  = self.hist.epochs
-                self.hist.trn.best.score_samples = self.hist.samples
-                self.hist.trn.best.scores.append((score_trn[0].item(), self.hist.epochs, self.hist.samples, self.hist.steps))
-                for callback in self.callbacks:
-                    callback.on_best_score(self, self.model)
+            if score_trn:
+                for score_name in score_trn.keys():
+                    if score_name not in self.hist.trn.best.scores:
+                        self.hist.trn.best.scores[score_name] = Config(score=None, epochs=0, samples=0, scores=[])
+                    if self.best_score(self.hist.trn.best.scores[score_name].score, score_trn[score_name]):
+                        last_best = self.epoch
+                        self.hist.trn.best.scores[score_name].score = score_trn[score_name]
+                        self.hist.trn.best.scores[score_name].epochs = self.hist.epochs
+                        self.hist.trn.best.scores[score_name].samples = self.hist.samples
+                        self.hist.trn.best.scores[score_name].scores.append((score_trn[score_name].item(), self.hist.epochs, self.hist.samples, self.hist.steps))
+                        for callback in self.callbacks:
+                            callback.on_best_score(self, self.model)
 
             self.update_ema_model(monitor)
 
@@ -712,8 +749,8 @@ class Trainer:
                     for callback in self.callbacks:
                         callback.on_validation_epoch_start(self, self.model)
 
-                    losses, scores, counts, (samples_val,steps_val,tm_val) = self.fit_one_epoch(self.model, self.data.val, train=False)
-                    loss_val, score_val = self.mean(losses, scores, counts)
+                    losses, scores, counts, epoch_scores, (samples_val,steps_val,tm_val) = self.fit_one_epoch(self.model, self.data.val, train=False)
+                    loss_val, score_val = self.agg_metrics(losses, scores, counts, epoch_scores)
                     self.add_hist(self.hist.val, self.data.val.batch_size, samples_val, steps_val, tm_val, loss_val, score_val, lr)
                     self.ext_hist(loss_trn, score_trn, loss_val, score_val, lr)
                 else:
@@ -732,15 +769,20 @@ class Trainer:
                     if self.best.copy and 'loss' in monitor:
                         self.best.loss_models  = copy.deepcopy(self.model)
 
-                if self.best_score(self.hist.val.best.score, score_val):
-                    self.hist.val.best.score = self.best.score = score_val[0]
-                    self.hist.val.best.score_epochs  = self.hist.epochs
-                    self.hist.val.best.score_samples = self.hist.samples
-                    self.hist.val.best.scores.append( ( score_val[0].item(), self.hist.epochs, self.hist.samples, self.hist.steps) )
-                    if self.folders.score and 'score' in monitor:
-                        self.save(Path(self.folders.score) / Path(self.folders.prefix + f"epoch_{self.epoch:04d}_score_{score_val[0]:.4f}_{self.now()}.pt"), model=self.model, optim=self.optim)
-                    if self.best.copy and 'score' in monitor:
-                        self.best.score_model  = copy.deepcopy(self.model)
+                if score_val:
+                    for score_name in score_val.keys():
+                        if score_name not in self.hist.val.best.scores:
+                            self.hist.val.best.scores[score_name] = Config(score=None, epochs=0, samples=0, scores=[])
+
+                        if self.best_score(self.hist.val.best.scores[score_name].score, score_val[score_name]):
+                            self.hist.val.best.scores[score_name].score = self.best.scores[score_name] = score_val[score_name]
+                            self.hist.val.best.scores[score_name].epochs = self.hist.epochs
+                            self.hist.val.best.scores[score_name].samples = self.hist.samples
+                            self.hist.val.best.scores[score_name].scores.append(( score_val[score_name].item(), self.hist.epochs, self.hist.samples, self.hist.steps))
+                            if self.folders.get(score_name) and score_name in monitor:
+                                self.save(Path(self.folders.get(score_name)) / Path(self.folders.prefix + f"epoch_{self.epoch:04d}_score_{score_val[score_name]:.4f}_{self.now()}.pt"), model=self.model, optim=self.optim)
+                            if self.best.copy and score_name in monitor:
+                                self.best.score_model  = copy.deepcopy(self.model)
 
                 for callback in self.callbacks:
                     callback.on_validation_epoch_end(self, self.model)
@@ -844,22 +886,26 @@ class Trainer:
             trn_loss_avr = np.mean(self.hist.trn.losses[-n:]);  trn_loss_std = np.std(self.hist.trn.losses[-n:])
         if len(self.hist.val.losses) > 1:
             val_loss_avr = np.mean(self.hist.val.losses[-n:]);  val_loss_std = np.std(self.hist.val.losses[-n:])
-        if len(self.hist.trn.scores) > 1:
-            trn_score_avr = np.mean(self.hist.trn.scores[-n:]);  trn_score_std = np.std(self.hist.trn.scores[-n:])
-        if len(self.hist.val.scores) > 1:
-            val_score_avr = np.mean(self.hist.val.scores[-n:]);  trn_score_std = np.std(self.hist.val.scores[-n:])
 
         if self.data.val is not None and self.hist.val.best.loss is not None:                                                 
             print(f"val_loss:  best = {self.hist.val.best.loss:.6f}[{self.hist.val.best.loss_epochs or ' '}], smooth{n} = {val_loss_bst:.6f}[{val_loss_epo}], last{n} = {val_loss_avr:.6f} ± {val_loss_std:.6f}")                    
         if self.data.trn is not None and self.hist.trn.best.loss is not None:                                         
             print(f"trn_loss:  best = {self.hist.trn.best.loss:.6f}[{self.hist.trn.best.loss_epochs or ' '}], smooth{n} = {trn_loss_bst:.6f}[{trn_loss_epo}], last{n} = {trn_loss_avr:.6f} ± {trn_loss_std:.6f}")
-        if self.data.val is not None and self.hist.val.best.score is not None:   
-            print(f"val_score: best = {self.hist.val.best.score:.6f}[{self.hist.val.best.score_epochs or ' '}], smooth{n} = {val_score_bst:.6f}[{val_score_epo}], last{n} = {val_score_avr:.6f} ± {val_score_std:.6f}")
-        if self.data.trn is not None and self.hist.trn.best.score is not None:     # есть score            
-            print(f"trn_score: best = {self.hist.trn.best.score:.6f}[{self.hist.trn.best.score_epochs or ' '}], smooth{n} = {trn_score_bst:.6f}[{trn_score_epo}], last{n} = {trn_score_avr:.6f} ± {trn_score_std:.6f}")            
-        
-        if self.hist.val.best.score_ema is not None:
-            print(f"ema: loss={self.hist.val.best.loss_ema or 0.0:.6f}, score={self.hist.val.best.score_ema or 0.0:.6f}")
+        if self.data.val is not None and self.hist.val.best.scores:
+            for score_name in self.hist.val.best.scores.keys():
+                if len(self.hist.val.scores[score_name]) > 1:
+                    val_score_avr = np.mean(self.hist.val.scores[score_name][-n:]); val_score_std = np.std(self.hist.val.scores[score_name][-n:])
+                print(f"val_{score_name}: best = {self.hist.val.best.scores[score_name].score:.6f}[{self.hist.val.best.scores[score_name].epochs or ' '}], smooth{n} = {val_score_bst:.6f}[{val_score_epo}], last{n} = {val_score_avr:.6f} ± {val_score_std:.6f}")
+        if self.data.trn is not None and self.hist.trn.best.scores:
+            for score_name in self.hist.trn.best.scores.keys():
+                if len(self.hist.trn.scores[score_name]) > 1:
+                    trn_score_avr = np.mean(self.hist.trn.scores[score_name][-n:]); trn_score_std = np.std(self.hist.trn.scores[score_name][-n:])
+                print(f"trn_{score_name}: best = {self.hist.trn.best.scores[score_name].score:.6f}[{self.hist.trn.best.scores[score_name].epochs or ' '}], smooth{n} = {trn_score_bst:.6f}[{trn_score_epo}], last{n} = {trn_score_avr:.6f} ± {trn_score_std:.6f}")
+        if self.hist.val.best.loss_ema is not None:
+            print(f"ema_val_loss={self.hist.val.best.loss_ema or 0.0:.6f}")
+        if self.data.val is not None and self.hist.val.best.scores_ema:
+            for score_name in self.hist.val.best.scores_ema.keys():
+                print(f"ema_val_{score_name}: best = {self.hist.val.best.scores_ema[score_name].score:.6f}[{self.hist.val.best.scores_ema[score_name].epochs or ' '}]")
 
         print(f"epochs={self.epoch}, samples={self.hist.samples}, steps={self.hist.steps}")
         t_steps = f"{self.hist.time.trn*1_000/self.hist.steps:.2f}"   if self.hist.steps > 0 else "???"
@@ -870,10 +916,10 @@ class Trainer:
     #---------------------------------------------------------------------------
 
     def best_score(self, best, score):
-        return score is not None  and len(score) \
+        return score is not None \
                 and (best is None \
-                or (best < score[0] and     self.score_max) \
-                or (best > score[0] and not self.score_max) )
+                or (best < score and     self.score_max) \
+                or (best > score and not self.score_max) )
 
     #---------------------------------------------------------------------------
 
@@ -882,7 +928,7 @@ class Trainer:
 
     #---------------------------------------------------------------------------
 
-    def add_hist(self, hist, batch_size, samples, steps, tm, loss, score, lr):
+    def add_hist(self, hist, batch_size, samples, steps, tm, loss, scores, lr):
         hist.epochs       .append(self.hist.epochs)
         hist.samples      .append(self.hist.samples)
         hist.steps        .append(self.hist.steps)
@@ -892,13 +938,22 @@ class Trainer:
         hist.times        .append(tm)
         hist.lr           .append(lr)
         hist.losses       .append(loss)
-        if score is not None and len(score):
-            hist.scores.append(score[0].item())
+        if scores is not None:
+            for score_name in scores.keys():
+                if score_name not in hist.scores:
+                    hist.scores[score_name] = []
+                hist.scores[score_name].append(scores[score_name].item())
 
     #---------------------------------------------------------------------------
 
     def ext_hist(self, loss_trn, score_trn, loss_val, score_val, lr):
-        self.wandb and self.wandb.log({'loss_trn': loss_trn, 'score_trn': score_trn, 'loss_val': loss_val, 'score_val': score_val, 'lr': lr})
+        if self.wandb:
+            ext_data = {'loss_trn': loss_trn, 'loss_val': loss_val, 'lr': lr}
+            for score_param in score_trn.keys():
+                ext_data[f"{score_param}_trn"] = score_trn[score_param]
+            for score_param in score_val.keys():
+                ext_data[f"{score_param}_val"] = score_val[score_param]
+            self.wandb.log(ext_data)
 
     #---------------------------------------------------------------------------
 
@@ -911,6 +966,7 @@ class Trainer:
             cfg = model.cfg if hasattr(model, "cfg") else Config()
             Path(fname).parent.mkdir(parents=True, exist_ok=True)
             state = {
+                'format':          1,                         # версия формата сейва
                 'info':            info,
                 'date':            datetime.datetime.now(),   # дата и время
                 'model' :          model.state_dict(),        # параметры модели
@@ -975,6 +1031,8 @@ class Trainer:
 
         #try:
         state = torch.load(fname)  # , map_location='cpu'
+        state = Trainer.backward_compatibility(state)
+
         print(f"info:  {state.get('info', '???')}")
         print(f"date:  {state.get('date', '???')}")
         print(f"model: {state.get('class','???')}")
@@ -1068,6 +1126,34 @@ class Trainer:
         self.model.load_state_dict(state['model'])        
 
     #---------------------------------------------------------------------------
+    @staticmethod
+    def backward_compatibility(state):
+        """ Поддержка предыдущих форматов """
+        if state.get('format', 0) < 1:
+            state = Trainer.backward_compatibility_0_1(state)
+        return state
+
+    @staticmethod
+    def backward_compatibility_0_1(state):
+        """ Преобразование 0-й версии в 1-ю """
+        if state['hist'].has('trn'):
+            if state['hist'].trn.has('scores'):
+                state['hist'].trn.scores = {'score': state['hist'].trn.scores}
+            if state['hist'].trn.has('best'):
+                state['hist'].trn.best.scores = {'score': Config(score=state['hist'].trn.best.score,
+                                                              epochs=state['hist'].trn.best.score_epochs,
+                                                              samples=state['hist'].trn.best.score_samples,
+                                                              scores=state['hist'].trn.best.scores)}
+        if state['hist'].has('val'):
+            if state['hist'].val.has('scores'):
+                state['hist'].val.scores = {'score': state['hist'].val.scores}
+            if state['hist'].val.has('best'):
+                state['hist'].val.best.scores = {'score': Config(score=state['hist'].val.best.score,
+                                                              epochs=state['hist'].val.best.score_epochs,
+                                                              samples=state['hist'].val.best.score_samples,
+                                                              scores=state['hist'].val.best.scores)}
+        state['format'] = 1
+        return state
 
     def wandb_init(self):
         """
@@ -1114,8 +1200,8 @@ class Trainer:
 
         # validate model
         
-        losses, scores, counts, (samples_val, steps_val, tm_val) = self.fit_one_epoch(self.model_ema.module, self.data.val, train=False)
-        loss_val_ema, score_val_ema = self.mean(losses, scores, counts)
+        losses, scores, counts, epoch_scores, (samples_val, steps_val, tm_val) = self.fit_one_epoch(self.model_ema.module, self.data.val, train=False)
+        loss_val_ema, score_val_ema = self.agg_metrics(losses, scores, counts, epoch_scores)
 
         # save best EMA validation loss:
         if self.hist.val.best.loss_ema is None or self.hist.val.best.loss_ema > loss_val_ema:
@@ -1127,9 +1213,14 @@ class Trainer:
                 self.best.loss_ema_model = copy.deepcopy(self.model_ema.module)
 
         # save best EMA validation score:
-        if self.best_score(self.hist.val.best.score_ema, score_val_ema):
-            self.hist.val.best.score_ema = score_val_ema[0]
-            if self.folders.score_ema and 'score_ema' in monitor:
-                self.save(Path(self.folders.score_ema) / Path(self.folders.prefix + f"epoch_{self.epoch:04d}_score_{score_val_ema[0]:.4f}_{self.now()}.pt"), model=self.model_ema.module)
-            if self.best.copy and 'score_ema' in monitor:
-                self.best.score_ema_model = copy.deepcopy(self.model_ema.module)
+        if score_val_ema:
+            for score_name in score_val_ema.keys():
+                if score_name not in self.hist.val.best.scores_ema:
+                    self.hist.val.best.scores_ema[score_name] = Config(score=None, epochs=0, samples=0, scores=[])
+
+                if self.best_score(self.hist.val.best.scores_ema[score_name].score, score_val_ema[score_name]):
+                    self.hist.val.best.scores[score_name].score = score_val_ema[score_name]
+                    if self.folders.get(f'{score_name}_ema') and f'{score_name}_ema' in monitor:
+                        self.save(Path(self.folders.get(f'{score_name}_ema')) / Path(self.folders.prefix + f"epoch_{self.epoch:04d}_score_{score_val_ema[score_name]:.4f}_{self.now()}.pt"), model=self.model_ema.module)
+                    if self.best.copy and f'{score_name}_ema' in monitor:
+                        self.best.score_ema_model = copy.deepcopy(self.model_ema.module)

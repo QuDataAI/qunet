@@ -39,9 +39,7 @@ class CNN(nn.Module):
                 kernel of max-pooling layer
             pool_str (int=0 or list of ints):
                 stride of max-pooling kernel
-            drop     (float=0.0 or list of floats):
-                dropout after each layer
-            drop_d   (int or list of ints)
+            drop   (int or list of ints)
                 1: Dropout, 2: Dropout2d
             fun (str='relu'):
                 activation function: gelu, relu, sigmoid, tanh, relu6, swish, hswish, hsigmoid
@@ -76,9 +74,8 @@ class CNN(nn.Module):
             norm     = 0,          # 0: no, 1: BatchNorm2d, 2: InstanceNorm2d, for each layers after Conv2D
             pool_ker = 0,          # int or list: max-pooling kernel
             pool_str = 0,          # int or list: stride of max-pooling kernel (if 0, then =pool_ker)
-            pool_pad = 0,          # int or list: padding of max-pooling kernel
-            drop     = 0.0,        # int or list: dropout after each layer (ReLU)
-            drop_d   = 2,          # int or list: 1: Dropout, 2: Dropout2d
+            pool_pad = 0,          # int or list: padding of max-pooling kernel            
+            drop     = 2,          # int or list: 1: Dropout, 2: Dropout2d
             fun      = 'relu',     # activation function: gelu, relu, sigmoid, tanh, relu6, swish, hswish, hsigmoid
         ))
 
