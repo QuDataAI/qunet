@@ -1106,6 +1106,7 @@ class Trainer:
         """
         try:
             state = torch.load(fname, map_location='cpu')
+            state = Trainer.backward_compatibility(state)
             if verbose:
                 print(f"info:  {state.get('info', '???')}")
                 print(f"date:  {state.get('date', '???')}")

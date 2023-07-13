@@ -220,14 +220,19 @@ class ModelState:
             ops = None
             mo, depth, i, count = lr['module'], lr['depth'], lr['i'], lr['n_kids']
             nm = lr['name'].split('.')[-1]
-            if count:
-                lr['st']=f"{'│' if depth else ''}{' '*max(0,3*depth-1)+'└─ ' if depth else '├─ '}{mo.__class__.__name__ if info >= 0 else nm}"
-                layer = mo.__class__.__name__
+            if count:                
+                layer, descr = mo.__class__.__name__, ""
                 if layer == 'Attention':
                     if lr['input']:     
                         B,T,E = lr['input']        
                         H = mo.cfg.H           
                         ops = B*(4*T*E*E +  2*T*T*E*H)
+                elif layer in ["Residual"]:
+                    if mo.p is not None:
+                        descr = f"(p={mo.p})" 
+
+                lr['st']=f"{'│' if depth else ''}{' '*max(0,3*depth-1)+'└─ ' if depth else '├─ '}{mo.__class__.__name__ if info >= 0 else nm}{descr}"                
+
             else:
                 ops = None
                 layer = mo.__class__.__name__

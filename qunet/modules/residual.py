@@ -84,7 +84,7 @@ class Residual(nn.Module):
         if len(self.after) == 0:
             self.after = nn.Identity()
 
-        self.p     = 0        
+        self.p     = None  if (self.align) else 0.0
         self.std   = torch.tensor(float(0.))
 
         # для статистической информации:
@@ -136,6 +136,12 @@ class Residual(nn.Module):
             self.std = torch.tensor(float(std))
 
         if p is not None:
+            self.p = p
+
+    #---------------------------------------------------------------------------
+
+    def set_drop_block(self, p=None):
+        if p is not None and self.p is not None:
             self.p = p
 
     #---------------------------------------------------------------------------

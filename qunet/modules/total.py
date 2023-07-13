@@ -213,6 +213,18 @@ class Change:
     #---------------------------------------------------------------------------
 
     @staticmethod
+    def drop_block(self, model, p=0.):
+        if type(p) in (int, float):
+            p = [p]
+
+        layers = Change.get_layers_with_method(model, "set_drop_block")
+
+        for i, layer in enumerate(layers):            
+            layer.set_drop_block( p[ min(i, len(p)-1) ] )
+
+    #---------------------------------------------------------------------------
+
+    @staticmethod
     def get_layers(model, kind):        
         """Get a list of model layers of type kind
 
@@ -233,4 +245,28 @@ class Change:
                 layers.append(mo)
             else:                
                 Change.get_layers_rec(mo, kind, layers) 
+
+    #---------------------------------------------------------------------------
+
+    @staticmethod
+    def get_layers_with_method(model, method):        
+        """Get a list of model layers wich has method
+
+        Example:
+        ----------
+        layers = get_layers_with_method(model, 'forward' )
+        """
+        layers = []
+        Change.get_layers_with_method_rec(model, method, layers)
+        return layers
+
+    #---------------------------------------------------------------------------
+
+    @staticmethod
+    def get_layers_with_method_rec(model, method, layers):    
+        for mo in model.children():
+            if hasattr(mo, method):
+                layers.append(mo)
+            else:                
+                Change.get_layers_with_method_rec(mo, method, layers) 
 

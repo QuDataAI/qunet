@@ -343,13 +343,6 @@ class CNN(nn.Module):
 
     #---------------------------------------------------------------------------
 
-    def debug(self, value):
-        for block in self.blocks:
-            if  hasattr(block, "debug"):
-                block.debug(value)
-
-    #---------------------------------------------------------------------------
-
     def debug(self, value=True, beta=None):
         for block in self.blocks:
             if  hasattr(block, "debug"):
