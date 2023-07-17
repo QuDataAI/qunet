@@ -459,7 +459,10 @@ class ModelState:
                     y = self.model(*x)
                 else:
                     y = self.model(x)
-            print(f"{self.model.__class__.__name__}:  {tuple(x.shape)} -> {tuple(y.shape)} [{np.prod(x.shape)/np.prod(y.shape):.2f}]")
+            if torch.is_tensor(x) and torch.is_tensor(y):
+                print(f"{self.model.__class__.__name__}:  {tuple(x.shape)} -> {tuple(y.shape)} [{np.prod(x.shape)/np.prod(y.shape):.2f}]")
+            else:
+                print(f"{self.model.__class__.__name__}")
 
         for lr in self.__layers:
             if 'forward_pre_hook_handle' in lr:

@@ -142,7 +142,7 @@ class CNN(nn.Module):
             mult          = 0,      # тип множителя scale (0-нет, 1-обучаемый скаляр, 2-обучаемый вектор)
             scale         = 1.,     # начальное значение scale (для mult > 0)
 
-            avg           = True,   # добавить после blocks слой nn.AdaptiveAvgPool2d(1)
+            pool          = 1,      # добавить после blocks слой nn.AdaptiveAvgPool2d(1) или nn.AdaptiveMaxPool2d(1) если 2
             flat          = True,   # добавить в конце nn.Flatten() 
         ))
 
@@ -172,10 +172,15 @@ class CNN(nn.Module):
 
             i += 1
 
-        if cfg.avg:
+        if cfg.pool==1:
             block = nn.AdaptiveAvgPool2d(1)
             block.name = 'avg'
             all_blocks.append( block )
+        elif cfg.pool==2:
+            block = nn.AdaptiveMaxPool2d(1)
+            block.name = 'max'
+            all_blocks.append( block )
+            
         if cfg.flat:
             block = nn.Flatten()
             block.name = 'flat'
