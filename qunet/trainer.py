@@ -296,7 +296,7 @@ class Trainer:
             scores = None
         elif type(data) is dict:
             loss = data.get('loss')
-            if loss:
+            if loss is not None:
                 del data['loss']
             if data:
                 scores = data
@@ -322,13 +322,13 @@ class Trainer:
 
     #---------------------------------------------------------------------------
 
-    def fit_one_epoch(self, model, data,  train=True, accumulate=1, states=[], verbose=1):
+    def fit_one_epoch(self, model, data,  train=True, accumulate_grad_batches=1, states=[], verbose=1):
         """
         Args
         ------------
         train (bool=True):
             режим тренировки, иначе валидации
-        accumulate:
+        accumulate_grad_batches:
             аккумулировать градиент для accumulate батчей перед сдвигом оптимизатора; используем, когда большой батч или граф не помещаются в GPU
             https://kozodoi.me/blog/20210219/gradient-accumulation
         
@@ -381,15 +381,15 @@ class Trainer:
             loss, step_scores = self.get_metrics(step)
 
             if train:
-                if accumulate > 1:                  # normalize loss to account for batch accumulation (!)
-                    loss = loss / accumulate
+                if accumulate_grad_batches > 1:                  # normalize loss to account for batch accumulation (!)
+                    loss = loss / accumulate_grad_batches
 
                 if scaler is None:
                     loss.backward()                 # вычисляем градиенты
                 else:
                     scaler.scale(loss).backward()   # вычисляем градиенты
 
-                if (batch_id+1) % accumulate == 0 or (batch_id + 1 == len(data)):
+                if (batch_id+1) % accumulate_grad_batches == 0 or (batch_id + 1 == len(data)):
                     if scaler is None:
                         self.optim.step()
                     else:
@@ -484,8 +484,8 @@ class Trainer:
                 score_val = self.hist.val.best.scores.get(score_name).score if score_name in self.hist.val.best.scores else 0.0
                 score_val_epoch = self.hist.val.best.scores.get(score_name).epochs if score_name in self.hist.val.best.scores else ' '
                 st += f" {score_name}=(val:{score_val:.3f}[{score_val_epoch}]"
-                if self.hist.val.best.get(f'{score_name}_ema'):
-                    st += f" ema:{(self.hist.val.best.get(f'{score_name}_ema',0.0)):.3f}"
+                if self.hist.val.best.scores_ema.get(score_name) and self.hist.val.best.scores_ema.get(score_name).score:
+                    st += f" ema:{self.hist.val.best.scores_ema.get(score_name).score:.3f}"
                 score_trn = self.hist.trn.best.scores.get(score_name).score if score_name in self.hist.trn.best.scores else 0.0
                 score_trn_epoch = self.hist.trn.best.scores.get(score_name).epochs if score_name in self.hist.trn.best.scores else ' '
                 st += f" trn:{score_trn:.3f}[{score_trn_epoch}]),"
@@ -624,7 +624,7 @@ class Trainer:
 
     #---------------------------------------------------------------------------
 
-    def fit(self,  epochs=None,  samples=None,
+    def fit(self,  epochs=None,  samples=None, accumulate_grad_batches=1,
             period_plot:  int=0,  pre_val:bool=False,
             period_val:   int=1,  period_val_beg=1, val_beg:int = None,
             period_point: int=1,  point_start:int=1,
@@ -640,6 +640,9 @@ class Trainer:
                 number of epochs for training (passes of one data_trn pack). If not defined (None) works "infinitely".
             samples (int):
                 if defined, then will stop after this number of samples, even if epochs has not ended
+            accumulate_grad_batches:
+                аккумулировать градиент для accumulate батчей перед сдвигом оптимизатора; используем, когда большой батч или граф не помещаются в GPU
+                https://kozodoi.me/blog/20210219/gradient-accumulation
             period_plot (int=0):
                 period after which the training plot is displayed (in epochs)
             pre_val (bool=False):
@@ -711,7 +714,11 @@ class Trainer:
             for callback in self.callbacks:
                 callback.on_train_epoch_start(self, self.model)
 
-            losses, scores, counts, epoch_scores, (samples_trn,steps_trn,tm_trn) = self.fit_one_epoch(self.model, self.data.trn, train=True, states=states)
+            losses, scores, counts, epoch_scores, (samples_trn,steps_trn,tm_trn) = self.fit_one_epoch(self.model,
+                                                                                                      self.data.trn,
+                                                                                                      train=True,
+                                                                                                      accumulate_grad_batches=accumulate_grad_batches,
+                                                                                                      states=states)
             loss_trn, score_trn = self.agg_metrics(losses, scores, counts, epoch_scores)
             lr = self.scheduler.get_lr()
             self.add_hist(self.hist.trn, self.data.trn.batch_size, samples_trn, steps_trn, tm_trn, loss_trn, score_trn, lr)
@@ -800,9 +807,12 @@ class Trainer:
             if self.folders.point and 'point' in monitor and (period_point > 0 and point_start < self.epoch and self.epoch % period_point == 0 or epoch == epochs):
                 for callback in self.callbacks:
                     callback.on_save_checkpoint(self, self.model, {})
-                score_val = score_val if score_val is not None else [0]
-                score_trn = score_trn if score_trn is not None else [0]
-                fname = f"epoch_{self.epoch:04d}({self.now()})_score(val_{score_val[0]:.4f}_trn_{score_trn[0]:.4f})_loss(val_{loss_val:.4f}_trn_{loss_trn:.4f}).pt"
+                score_val = score_val if score_val is not None else []
+                score_trn = score_trn if score_trn is not None else []
+                fname = f"epoch_{self.epoch:04d}({self.now()})"
+                for i, score_name in enumerate(score_val.keys()):
+                    fname += f"_{score_name}(val_{score_val[score_name]:.4f}_trn_{score_trn[score_name]:.4f})"
+                fname += f"_loss(val_{loss_val:.4f}_trn_{loss_trn:.4f}).pt"
                 self.save(Path(self.folders.point) / Path(self.folders.prefix + fname), model=self.model, optim=self.optim)
 
             self.step_schedulers(1, samples_trn)
@@ -905,7 +915,8 @@ class Trainer:
             print(f"ema_val_loss={self.hist.val.best.loss_ema or 0.0:.6f}")
         if self.data.val is not None and self.hist.val.best.scores_ema:
             for score_name in self.hist.val.best.scores_ema.keys():
-                print(f"ema_val_{score_name}: best = {self.hist.val.best.scores_ema[score_name].score:.6f}[{self.hist.val.best.scores_ema[score_name].epochs or ' '}]")
+                if self.hist.val.best.scores_ema[score_name].score is not None:
+                    print(f"ema_val_{score_name}: best = {self.hist.val.best.scores_ema[score_name].score:.6f}[{self.hist.val.best.scores_ema[score_name].epochs or ' '}]")
 
         print(f"epochs={self.epoch}, samples={self.hist.samples}, steps={self.hist.steps}")
         t_steps = f"{self.hist.time.trn*1_000/self.hist.steps:.2f}"   if self.hist.steps > 0 else "???"
@@ -949,10 +960,12 @@ class Trainer:
     def ext_hist(self, loss_trn, score_trn, loss_val, score_val, lr):
         if self.wandb:
             ext_data = {'loss_trn': loss_trn, 'loss_val': loss_val, 'lr': lr}
-            for score_param in score_trn.keys():
-                ext_data[f"{score_param}_trn"] = score_trn[score_param]
-            for score_param in score_val.keys():
-                ext_data[f"{score_param}_val"] = score_val[score_param]
+            if score_trn:
+                for score_param in score_trn.keys():
+                    ext_data[f"{score_param}_trn"] = score_trn[score_param]
+            if score_val:
+                for score_param in score_val.keys():
+                    ext_data[f"{score_param}_val"] = score_val[score_param]
             self.wandb.log(ext_data)
 
     #---------------------------------------------------------------------------
@@ -1220,7 +1233,7 @@ class Trainer:
                     self.hist.val.best.scores_ema[score_name] = Config(score=None, epochs=0, samples=0, scores=[])
 
                 if self.best_score(self.hist.val.best.scores_ema[score_name].score, score_val_ema[score_name]):
-                    self.hist.val.best.scores[score_name].score = score_val_ema[score_name]
+                    self.hist.val.best.scores_ema[score_name].score = score_val_ema[score_name]
                     if self.folders.get(f'{score_name}_ema') and f'{score_name}_ema' in monitor:
                         self.save(Path(self.folders.get(f'{score_name}_ema')) / Path(self.folders.prefix + f"epoch_{self.epoch:04d}_score_{score_val_ema[score_name]:.4f}_{self.now()}.pt"), model=self.model_ema.module)
                     if self.best.copy and f'{score_name}_ema' in monitor:

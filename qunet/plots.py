@@ -184,7 +184,8 @@ def subplot_history(nrows, ncols, index, val, trn, view, view_tot, c_unit, c_uni
     if view.lr and len(trn.samples):        
         if ax2 is None:
             ax2 = ax1.twinx();                                     # lr
-            ax2.set_yscale('log')                
+            ax2.set_yscale('log')                  
+          
             lr1, lr2 = np.min(trn.lr), np.max(trn.lr)
             if lr1 > 0 and lr2 > 0:
                 lr1, lr2 = math.floor(np.log10(lr1)), math.ceil(np.log10(lr2))
@@ -202,9 +203,10 @@ def subplot_history(nrows, ncols, index, val, trn, view, view_tot, c_unit, c_uni
         
         if first:
             ax2.legend(['lr'], loc='upper right', frameon = False)
-            ax2.tick_params(axis='y', colors='darkred')
-            #ax2.set_yticklabels([])
-            #ax2.minorticks_off() # for log scale
+            ax2.tick_params(axis='y', colors='darkred')    
+        if index == 1 and ncols > 1:
+            ax2.set_yticklabels([])
+            ax2.minorticks_off() # for log scale    
 
 
     return ax1, ax2
