@@ -114,6 +114,14 @@ class Callback:
         """
         return batch
 
+    #---------------------------------------------------------------------------
+    #
+    def on_train_batch_end(self, trainer, model, batch, batch_id):
+        """
+        Called after train batch
+        """
+        return
+
     #---------------------------------------------------------------------------  
         
     def on_validation_before_batch_transfer(self, trainer, model, batch, batch_id):
@@ -129,6 +137,14 @@ class Callback:
         Called after transfer batch to GPU
         """
         return batch
+
+    #---------------------------------------------------------------------------
+    #
+    def on_validation_batch_end(self, trainer, model, batch, batch_id):
+        """
+        Called after train batch
+        """
+        return
 
     #---------------------------------------------------------------------------
     #     

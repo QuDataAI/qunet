@@ -425,6 +425,13 @@ class Trainer:
                 lst = time.time()
                 self.fit_progress(train, batch_id+1, len(data),
                                   losses_all, scores_all, counts_all, epoch_scores, samples, steps, time.time()-beg)
+
+            if train:
+                for callback in self.callbacks:
+                    batch = callback.on_train_batch_end(self, self.model, batch, batch_id)
+            else:
+                for callback in self.callbacks:
+                    batch = callback.on_validation_batch_end(self, self.model, batch, batch_id)
             
             batch_id += 1
 
