@@ -237,24 +237,24 @@ class ModelState:
                 ops = None
                 layer = mo.__class__.__name__
                 descr = layer if info >= 0 else nm                
-                if layer == "Linear":                       
+                if isinstance(mo, nn.Linear):                       
                     descr += f"({mo.in_features}->{mo.out_features}, {'T' if mo.bias is not None else 'F'})"
                     if lr['input']:
                         B = np.prod(lr['input'][:-1])
                         ops = B * mo.in_features*(mo.out_features + (1 if mo.bias is not None else 0))
-                elif layer == "Bilinear": 
+                elif isinstance(mo, nn.Bilinear): 
                     descr += f"({mo.in1_features},{mo.in2_features}->{mo.out_features})"                    
-                elif layer in ["Dropout", "Dropout2d", "Dropout3d"]:   
+                elif isinstance(mo, (nn.Dropout, nn.Dropout2d, nn.Dropout3d)):   
                     descr += f"({mo.p})"
                     #if lr['input']:
                     #    ops = np.prod(lr['input'])
                 elif layer in ["ShiftFeatures"]: 
                     descr += f"({mo.std})"                                                            
-                elif layer in ["BatchNorm1d","BatchNorm2d","BatchNorm3d"]: 
+                elif isinstance(mo, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)): 
                     descr += f"({mo.num_features})"                    
-                elif layer == "LayerNorm": 
+                elif isinstance(mo, nn.LayerNorm): 
                     descr += f"({t2s(mo.normalized_shape)})"                    
-                elif layer in ["Conv1d","Conv2d","Conv3d"]: 
+                elif isinstance(mo, (nn.Conv1d, nn.Conv2d, nn.Conv3d)): 
                     if info == 1:  descr += f"({mo.in_channels}->{mo.out_channels})"
                     elif info > 1: descr += f"({mo.in_channels}->{mo.out_channels}, k:{t2s(mo.kernel_size)}, s:{t2s(mo.stride)}, p:{t2s(mo.padding)}, {'T' if mo.bias is not None else 'F'})"                    
                     if lr['input'] and layer == "Conv2d":                        
@@ -262,15 +262,15 @@ class ModelState:
                         (kh,kw) = (mo.kernel_size, mo.kernel_size) if type(mo.kernel_size) == int else mo.kernel_size
                         (sh,sw) = (mo.stride, mo.stride)           if type(mo.stride)      == int else mo.stride
                         ops = B * mo.in_channels*(mo.out_channels + (1 if mo.bias is not None  else 0)) * H1*W1*kh*kw // (sh*sw)
-                elif layer in ["MaxPool1d", "MaxPool2d", "MaxPool3d"]: 
+                elif isinstance(mo, (nn.MaxPool1d, nn.MaxPool2d, nn.MaxPool3d)): 
                     if info == 1:  descr += f"(k:{mo.kernel_size}, s:{mo.stride})"
                     elif info > 1: descr += f"(k:{t2s(mo.kernel_size)}, s:{t2s(mo.stride)}, p:{t2s(mo.padding)})"
-                elif layer == 'Embedding': 
+                elif isinstance(mo, nn.Embedding): 
                     descr += f"({mo.num_embeddings},{mo.embedding_dim})"
-                elif layer in ['RNN','GRU','LSTM']: 
+                elif isinstance(mo, (nn.RNN, nn.GRU, nn.LSTM)): 
                     if info == 1:  descr += f"({mo.input_size},{mo.hidden_size})"    
                     elif info > 1: descr += f"({mo.input_size},{mo.hidden_size}, l:{mo.num_layers}, bi:{'T' if mo.bidirectional else 'F'})"
-                elif layer in ["AdaptiveAvgPool1d", "AdaptiveAvgPool2d"]: 
+                elif isinstance(mo, (nn.AdaptiveAvgPool1d, nn.AdaptiveAvgPool2d)):
                     descr += f"({mo.output_size})"
                 elif layer in ["Scaler"]:
                     descr += f"({mo.kind})"

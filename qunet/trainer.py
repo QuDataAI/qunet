@@ -87,6 +87,8 @@ class Trainer:
             prefix =    "",                 # add prefix to file name
         )
 
+        self.folders.protect(False)    # for dynamic score folder creation
+
         # -------------------------------- настройки для построения графиков ошибок и метрик
         self.view = Config(
             w  = 12,                   # plt-plot width
@@ -807,8 +809,8 @@ class Trainer:
             if self.folders.point and 'point' in monitor and (period_point > 0 and point_start < self.epoch and self.epoch % period_point == 0 or epoch == epochs):
                 for callback in self.callbacks:
                     callback.on_save_checkpoint(self, self.model, {})
-                score_val = score_val if score_val is not None else []
-                score_trn = score_trn if score_trn is not None else []
+                score_val = score_val if score_val is not None else {}
+                score_trn = score_trn if score_trn is not None else {}
                 fname = f"epoch_{self.epoch:04d}({self.now()})"
                 for i, score_name in enumerate(score_val.keys()):
                     fname += f"_{score_name}(val_{score_val[score_name]:.4f}_trn_{score_trn[score_name]:.4f})"
