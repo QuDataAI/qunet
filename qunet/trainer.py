@@ -267,6 +267,11 @@ class Trainer:
         """ send mini-batch to device """
         if torch.is_tensor(batch) or Batch in batch.__class__.__bases__:
             return batch.to(self.device)
+        if type(batch) is dict:
+            for key in batch.keys():
+                if torch.is_tensor(batch[key]):
+                    batch[key] = batch[key].to(self.device)
+            return batch
         batch = list(batch)
         for i in range(len(batch)):
             batch[i] = self.to_device(batch[i])
@@ -318,6 +323,8 @@ class Trainer:
             return len(batch)
         if type(batch) is list or type(batch) is tuple:
             return self.samples_in_batch(batch[0])
+        if type(batch) is dict:
+            return self.samples_in_batch(batch[list(batch.keys())[0]])
         if Batch in batch.__class__.__bases__:
             return len(batch)
         assert False, "wrong type of the fist element in batch"
@@ -391,6 +398,9 @@ class Trainer:
                 else:
                     scaler.scale(loss).backward()   # вычисляем градиенты
 
+                if accumulate_grad_batches > 1:                  # normalize loss to account for batch accumulation (!)
+                    loss = loss * accumulate_grad_batches
+
                 if (batch_id+1) % accumulate_grad_batches == 0 or (batch_id + 1 == len(data)):
                     if scaler is None:
                         self.optim.step()
@@ -406,6 +416,9 @@ class Trainer:
                     steps      += 1                 # шагов за эпоху
                     self.hist.steps += 1            # шагов за всё время
                 self.hist.samples += num            # примеров за всё время
+
+                for callback in self.callbacks:
+                    callback.on_after_step(self, self.model, batch, batch_id)                
 
             samples += num                          # просмотренных примеров за эпоху
             losses_all = loss.detach() if losses_all is None else torch.vstack([losses_all, loss.detach()])
@@ -453,6 +466,7 @@ class Trainer:
             self.fit_progress(train, len(data), len(data), losses_all, scores_all, counts_all, epoch_scores, samples, steps, time.time()-beg)
             losses_all = losses_all.cpu()
 
+        torch.set_grad_enabled(True)  
         return losses_all, scores_all, counts_all, epoch_scores, (samples, steps, time.time()-beg)
 
     #---------------------------------------------------------------------------
@@ -629,6 +643,7 @@ class Trainer:
         for callback in self.callbacks:
             callback.on_predict_end(self, model)
 
+        torch.set_grad_enabled(True)
         return res
 
     #---------------------------------------------------------------------------
@@ -641,7 +656,8 @@ class Trainer:
             monitor = [],
             patience = None,
             states = [],
-            period_state: int=0):
+            period_state: int=0,
+            show_stat: bool = True):
         """
         Args
         ------------
@@ -674,6 +690,8 @@ class Trainer:
                 an instance of the ModelState class that accumulates information about gradients on model parameters
             period_state (int=0)
                 period after which the model state  plot is displayed (in epochs)
+            show_stat (bool=True)
+                show metrics after fit
 
         Example
         ```
@@ -808,7 +826,8 @@ class Trainer:
                     self.plot()
                     for callback in self.callbacks:
                         callback.on_after_plot(self, self.model)
-                self.stat()
+                if show_stat:
+                    self.stat()
             if len(states) and period_state > 0 and  (self.epoch % period_state == 0 or epoch == epochs):
                 for state in states:
                     state.plot()            
@@ -830,7 +849,8 @@ class Trainer:
                 samples -= samples_trn
                 if samples <= 0:
                     self.plot()
-                    self.stat()
+                    if show_stat:
+                        self.stat()
                     break
 
             for callback in self.callbacks:
@@ -842,19 +862,20 @@ class Trainer:
                     self.plot()
                     for callback in self.callbacks:
                         callback.on_after_plot(self, self.model)
-                    self.stat()
+                    if show_stat:
+                        self.stat()
                 if period_state > 0:
                     for state in states:
                         state.plot()
                 break
 
-        if period_plot <= 0:
+        if period_plot <= 0 and show_stat:            
             self.stat()
 
         for callback in self.callbacks:
             callback.on_fit_end(self, self.model)
 
-
+        torch.set_grad_enabled(True) 
     #---------------------------------------------------------------------------
 
     def plot(self, view=None, hist=None, fname=None):
