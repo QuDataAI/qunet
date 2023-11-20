@@ -657,7 +657,8 @@ class Trainer:
             patience = None,
             states = [],
             period_state: int=0,
-            show_stat: bool = True):
+            show_stat: bool = True,
+            verbose=2):
         """
         Args
         ------------
@@ -692,6 +693,8 @@ class Trainer:
                 period after which the model state  plot is displayed (in epochs)
             show_stat (bool=True)
                 show metrics after fit
+            verbose (int=0,1,2)
+                output of training information
 
         Example
         ```

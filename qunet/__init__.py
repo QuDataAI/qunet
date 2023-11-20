@@ -18,6 +18,6 @@ from .modules.total       import *
 
 from .optim.scheduler     import *
 from .optim.adams         import Adams
-from .optim.lion         import Lion
+from .optim.lion          import Lion
 
-
+from .rl.dqn              import *
