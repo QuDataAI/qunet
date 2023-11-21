@@ -107,8 +107,8 @@ class DQN:
             rewrite  = 1.0,             # rewrite memory (if < 1 - sorted)           
             reset    = True,            # reset i-th agent in muli-agent mode when done
             scale    = True,            # scale or not observe to [-1...1]
-            loss     = 'huber',         # loss function (mse, huber)
-            optimizer= 'adam',          # optimizer (sgd, adam)
+            loss     = 'mse',           # loss function (mse, huber)
+            optim    = 'adam',          # optimizer (sgd, adam)
             lm       = 0.001,           # learning rate           
         )
         self.bounds= Config(low=None, high=None) # min and max observation values
@@ -124,12 +124,12 @@ class DQN:
         self.nA   = nA                           # number of discrete actions
         self.nS   = nS                           # number of state components
 
-        self.gpu =torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        print("device:", self.gpu)
+        self.device =torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        print("device:", self.device)
 
         self.model = Config(
-            current = model.to(self.gpu),
-            target  = copy.deepcopy(model).to(self.gpu))
+            current = model.to(self.device),
+            target  = copy.deepcopy(model).to(self.device))
         
         self.best = Config(
             model  = copy.deepcopy(model),   
@@ -142,9 +142,9 @@ class DQN:
         else:
             print("ERROR: Unknown loss function!!!")
         
-        if   self.params.optimizer == 'sgd':
+        if   self.params.optim == 'sgd':
              self.optimizer = torch.optim.SGD(self.model.current.parameters(), lr=self.params.lm, momentum=0.8)
-        elif self.params.optimizer == 'adam':
+        elif self.params.optim == 'adam':
              self.optimizer = torch.optim.Adam(self.model.current.parameters(), lr=self.params.lm)
         else:
             print("ERROR: Unknown optimizer!!!")
@@ -176,7 +176,7 @@ class DQN:
         if np.random.random() < self.epsilon:            
             return np.random.randint(self.nA)    # random action
 
-        x = torch.tensor(state, dtype=torch.float32).to(self.gpu)
+        x = torch.tensor(state, dtype=torch.float32).to(self.device)
         with torch.no_grad():
             y = self.model.current(x).detach().to('cpu').numpy() 
         return np.argmax(y)                      # best action
@@ -249,47 +249,6 @@ class DQN:
                 #env.close()
     #------------------------------------------------------------------------------------
 
-    def learn_model(self):
-        """ Model Training """
-        batch = self.params.batch
-        
-        S0, A0, S1, R1, Done = self.memo.samples(batch)
-        S0 = S0.to(self.gpu); A0 = A0.to(self.gpu)
-        S1 = S1.to(self.gpu); R1 = R1.to(self.gpu);  Done = Done.to(self.gpu)
-        
-        if self.params.method == 'DQN':
-            with torch.no_grad():
-                y = self.model.target(S1).detach()
-            self.maxQ, _ = torch.max(y, 1)      # maximum Q values for S1
-        elif self.params.method == 'DDQN':
-            y = self.model.current(S1)                 
-            a = torch.argmax(y,1).view(-1,1)   # a = arg max Q(s1,a; theta)                 
-            with torch.no_grad():
-                q = self.model.target(S1)                       
-            self.maxQ = q.gather(1, a)         # Q(s1, a; theta')   
-        else:            
-            print("Unknown method")
-            
-        sum_loss = 0        
-        s0, a0   = S0, A0.view(-1,1)
-        r1, done = R1.view(-1,1), Done.view(-1,1)
-        q1       = self.maxQ.view(-1,1)
-
-        yb = r1 + self.params.gamma * q1 * (1.0 - done)
-
-        y = self.model.current(s0)     # forward
-        y = y.gather(1, a0)
-        L = self.loss(y, yb)
-
-        self.optimizer.zero_grad()     # reset the gradients
-        L.backward()                   # calculate gradients
-        self.optimizer.step()          # adjusting parameters
-
-        sum_loss += L.detach().item()
-
-        self.last_loss = sum_loss
-    #------------------------------------------------------------------------------------
-
     def multi_agent_policy(self, state):
         """ 
         Return action according to epsilon greedy strategy 
@@ -299,7 +258,7 @@ class DQN:
         if np.random.random() < self.epsilon:            
             return np.random.randint(low=0, high=self.nA, size=(N,))    # random action
 
-        x = torch.tensor(state, dtype=torch.float32).to(self.gpu)
+        x = torch.tensor(state, dtype=torch.float32).to(self.device)
         with torch.no_grad():
             y = self.model.current(x).detach().to('cpu').numpy() 
         return np.argmax(y,axis=-1)              # best action (N, )
@@ -373,6 +332,47 @@ class DQN:
 
             s0, a0 = s1, a1
         return
+    #------------------------------------------------------------------------------------    
+
+    def learn_model(self):
+        """ Model Training """
+        batch = self.params.batch
+        
+        S0, A0, S1, R1, Done = self.memo.samples(batch)
+        S0 = S0.to(self.device); A0 = A0.to(self.device)
+        S1 = S1.to(self.device); R1 = R1.to(self.device);  Done = Done.to(self.device)
+        
+        if self.params.method == 'DQN':
+            with torch.no_grad():
+                y = self.model.target(S1).detach()
+            self.maxQ, _ = torch.max(y, 1)      # maximum Q values for S1
+        elif self.params.method == 'DDQN':
+            y = self.model.current(S1)                 
+            a = torch.argmax(y,1).view(-1,1)   # a = arg max Q(s1,a; theta)                 
+            with torch.no_grad():
+                q = self.model.target(S1)                       
+            self.maxQ = q.gather(1, a)         # Q(s1, a; theta')   
+        else:            
+            print("Unknown method")
+            
+        sum_loss = 0        
+        s0, a0   = S0, A0.view(-1,1)
+        r1, done = R1.view(-1,1), Done.view(-1,1)
+        q1       = self.maxQ.view(-1,1)
+
+        yb = r1 + self.params.gamma * q1 * (1.0 - done)
+
+        y = self.model.current(s0)     # forward
+        y = y.gather(1, a0)
+        L = self.loss(y, yb)
+
+        self.optimizer.zero_grad()     # reset the gradients
+        L.backward()                   # calculate gradients
+        self.optimizer.step()          # adjusting parameters
+
+        sum_loss += L.detach().item()
+
+        self.last_loss = sum_loss
     #------------------------------------------------------------------------------------
         
     def plot(self, text):
