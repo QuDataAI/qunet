@@ -21,3 +21,4 @@ from .optim.adams         import Adams
 from .optim.lion          import Lion
 
 from .rl.dqn              import *
+from .rl.memory_buffer    import *
